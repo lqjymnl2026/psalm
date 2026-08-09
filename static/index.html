@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>赞美诗资料智能整理中心</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎵</text></svg>">
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<div id="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-icon">🎵</div>
+      <div class="brand-text">
+        <div class="brand-title">赞美诗资料</div>
+        <div class="brand-sub">智能整理中心</div>
+      </div>
+    </div>
+    <nav class="nav" id="nav">
+      <a href="#/dashboard" data-page="dashboard" class="nav-item"><span class="nav-ico">📊</span>工作台</a>
+      <a href="#/collection" data-page="collection" class="nav-item"><span class="nav-ico">📥</span>曲目收集</a>
+      <a href="#/organize" data-page="organize" class="nav-item"><span class="nav-ico">🧠</span>智能整理</a>
+      <a href="#/library" data-page="library" class="nav-item"><span class="nav-ico">📚</span>曲目库</a>
+      <a href="#/review" data-page="review" class="nav-item"><span class="nav-ico">✅</span>筛选审核</a>
+      <a href="#/export" data-page="export" class="nav-item"><span class="nav-ico">📤</span>导出中心</a>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="status-pill" id="ocrPill">OCR：未检测</div>
+      <div class="status-pill" id="aiPill">AI：本地引擎</div>
+      <div class="ver">v1.0 · 本地离线版</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <h1 id="pageTitle">工作台</h1>
+        <div class="page-sub" id="pageSub">曲目总览与快速入口</div>
+      </div>
+      <div class="topbar-actions">
+        <button class="btn btn-ghost" id="btnSettings">⚙️ 设置</button>
+        <button class="btn btn-primary" id="btnQuickImport">📥 快速导入</button>
+      </div>
+    </header>
+
+    <div class="content" id="content"></div>
+  </main>
+</div>
+
+<!-- 曲目编辑弹窗 -->
+<div class="modal-mask" id="songModal" hidden>
+  <div class="modal modal-lg">
+    <div class="modal-head">
+      <h3 id="songModalTitle">编辑曲目</h3>
+      <button class="modal-close" data-close="songModal">✕</button>
+    </div>
+    <div class="modal-body" id="songModalBody"></div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" data-close="songModal">取消</button>
+      <button class="btn btn-primary" id="songSaveBtn">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 设置弹窗 -->
+<div class="modal-mask" id="settingsModal" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <h3>系统设置</h3>
+      <button class="modal-close" data-close="settingsModal">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>OpenAI 兼容接口（可选，用于真实 AI 识别）</label>
+        <input type="text" id="setBase" placeholder="https://api.openai.com/v1">
+      </div>
+      <div class="form-group">
+        <label>API Key</label>
+        <input type="password" id="setKey" placeholder="sk-...（留空则不启用）">
+      </div>
+      <div class="form-group">
+        <label>模型</label>
+        <input type="text" id="setModel" placeholder="gpt-4o-mini">
+      </div>
+      <div class="hint">未配置时使用内置“本地智能引擎”（离线可用，无需联网）。配置后，在“智能整理”页可勾选使用 AI。</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" data-close="settingsModal">取消</button>
+      <button class="btn btn-primary" id="settingsSaveBtn">保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toasts"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

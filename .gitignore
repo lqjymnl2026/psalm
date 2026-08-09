@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+data/db.json
+data/db.json.tmp
+data/uploads/*
+!data/uploads/.gitkeep
+data/exports/*
+!data/exports/.gitkeep
+.DS_Store
+work/
