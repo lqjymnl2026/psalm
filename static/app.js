@@ -596,6 +596,7 @@ async function renderLibrary() {
 }
 
 async function loadLibrary() {
+  if (!Number.isFinite(state.lib.page) || state.lib.page < 1) state.lib.page = 1;
   const f = readFilters();
   const qs = new URLSearchParams();
   Object.entries(f).forEach(([k, v]) => { if (v && v !== "0") qs.set(k, v); });
@@ -603,6 +604,7 @@ async function loadLibrary() {
   const d = await api("/api/songs?" + qs.toString());
   state.lib.total = d.total;
   const pages = Math.max(1, Math.ceil(d.total / state.lib.size));
+  if (state.lib.page > pages) state.lib.page = pages;
   const p = state.lib.page;
   $("#content").innerHTML = `
     <div class="card section">
@@ -662,7 +664,8 @@ function bindLibrary(d) {
   $("#libApply").addEventListener("click", apply);
   $("#libSearch").addEventListener("keydown", (e) => { if (e.key === "Enter") apply(); });
   document.querySelectorAll("[data-page]").forEach((b) => b.addEventListener("click", () => {
-    const p = Number(b.dataset.page); if (p < 1) return;
+    const p = Number(b.dataset.page);
+    if (!Number.isFinite(p) || p < 1) return;
     state.lib.page = p; loadLibrary();
   }));
   $("#checkAll").addEventListener("change", (e) => {
