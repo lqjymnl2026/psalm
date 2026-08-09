@@ -8,3 +8,6 @@ data/exports/*
 !data/exports/.gitkeep
 .DS_Store
 work/
+
+tools/ocr_tool
+tools/.cache/

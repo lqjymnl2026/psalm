@@ -1,6 +1,13 @@
 #!/bin/bash
 # 赞美诗资料智能整理中心 · 启动脚本
+# 用法：./run.sh           仅本机访问
+#       ./run.sh --lan     局域网模式（手机可访问）
 cd "$(dirname "$0")"
+
+if [ "$1" = "--lan" ] || [ "$1" = "-l" ]; then
+  export HOST="0.0.0.0"
+  echo "📱 局域网模式已开启：手机与本机连同一 WiFi 后，打开启动信息中的 http://<本机IP>:8787"
+fi
 
 # 1) 优先使用 Codex 自带 Python 运行时（含 openpyxl/pdfplumber/docx/reportlab 等）
 PY=""

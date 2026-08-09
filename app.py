@@ -29,6 +29,7 @@ for d in (DATA, UPLOADS, EXPORTS, SAMPLES):
     d.mkdir(parents=True, exist_ok=True)
 
 PORT = int(os.environ.get("PORT", "8787"))
+HOST = os.environ.get("HOST", "127.0.0.1")
 sys.path.insert(0, str(ROOT))
 
 import engine
@@ -41,6 +42,32 @@ STATUSES = list(STATUS_LABELS.keys())
 
 def now_str():
     return time.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def get_lan_ips():
+    """获取本机局域网 IPv4 地址（UDP 连接法，不发送数据）。"""
+    import socket
+    ips = []
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        if ip and not ip.startswith("127."):
+            ips.append(ip)
+    except Exception:
+        pass
+    if not ips:
+        try:
+            import subprocess
+            for iface in ("en0", "en1"):
+                out = subprocess.run(["ipconfig", "getifaddr", iface], capture_output=True, text=True, timeout=3)
+                ip = out.stdout.strip()
+                if ip and not ip.startswith("127."):
+                    ips.append(ip)
+        except Exception:
+            pass
+    return ips
 
 
 def mask_key(k):
@@ -321,6 +348,42 @@ def ai_classify(song, settings):
         return None
 
 
+def ai_ocr_image(path, settings):
+    """用 OpenAI 兼容视觉模型识别图片文字 → {title, firstLine, lyrics, number} 或 None。"""
+    import base64
+    import urllib.request
+    key = (settings.get("openaiKey") or "").strip()
+    base = (settings.get("openaiBase") or "https://api.openai.com/v1").rstrip("/")
+    model = settings.get("openaiModel") or "gpt-4o-mini"
+    if not key:
+        return None
+    try:
+        b64 = base64.b64encode(Path(path).read_bytes()).decode("utf-8")
+    except Exception:
+        return None
+    mime = mimetypes.guess_type(path)[0] or "image/png"
+    prompt = ("你是赞美诗资料整理助手。请识别这张赞美诗图片中的文字，并输出 JSON（不要输出其他内容）："
+              '{"title":"歌名","firstLine":"歌词第一句","lyrics":"完整歌词，每句一行","number":"编号（没有则空字符串")}')
+    body = json.dumps({"model": model, "temperature": 0.1, "messages": [{"role": "user", "content": [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+    ]}]}).encode("utf-8")
+    req = urllib.request.Request(base + "/chat/completions", data=body, headers={
+        "Authorization": "Bearer " + key, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        content = data["choices"][0]["message"]["content"]
+        obj = json.loads(content)
+        return {"title": str(obj.get("title") or "").strip(),
+                "firstLine": str(obj.get("firstLine") or "").strip(),
+                "lyrics": str(obj.get("lyrics") or "").strip(),
+                "number": str(obj.get("number") or "").strip(),
+                "note": "由 AI 视觉识别，请核对后保存"}
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------- 统计
 def compute_stats(store):
     songs = [s for s in store.songs() if s.get("status") != "merged"]
@@ -572,7 +635,10 @@ class Handler(BaseHTTPRequestHandler):
                     "types": list(engine.MUSIC_TYPES.keys()), "statuses": STATUS_LABELS},
                     "settings": {**store.data.get("settings", {}), "openaiKey": mask_key(store.data.get("settings", {}).get("openaiKey", ""))},
                     "samples": [f"/files/samples/{p}" for p in sorted(os.listdir(SAMPLES)) if not p.startswith(".")],
-                    "ocrAvailable": parsers.ocr_available()})
+                    "ocrAvailable": parsers.ocr_available(),
+                    "ocrEngine": parsers.ocr_engine_name(),
+                    "lanUrls": [f"http://{ip}:{PORT}" for ip in get_lan_ips()],
+                    "host": HOST, "port": PORT})
             if path == "/api/stats":
                 return self._json({"stats": compute_stats(store)})
             if path == "/api/songs":
@@ -608,8 +674,13 @@ class Handler(BaseHTTPRequestHandler):
             statuses=(gv("statuses", "").split(",") if gv("statuses", "") else None),
         )
         songs = sort_songs(songs, gv("sort", "number"))
-        page = max(1, int(gv("page", "1")))
-        size = min(500, max(1, int(gv("size", "50"))))
+        def _int(v, d):
+            try:
+                return int(float(v))
+            except (TypeError, ValueError):
+                return d
+        page = max(1, _int(gv("page", "1"), 1))
+        size = min(500, max(1, _int(gv("size", "50"), 50)))
         total = len(songs)
         items = songs[(page - 1) * size: page * size]
         return self._json({"items": items, "total": total, "page": page, "size": size})
@@ -618,6 +689,36 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         try:
+            if path == "/api/ocr":
+                ctype = self.headers.get("Content-Type", "")
+                parts = parse_multipart(self._read_body(), ctype)
+                if not parts["files"]:
+                    return self._json({"ok": False, "msg": "未收到图片"}, 400)
+                fname, data = parts["files"][0]
+                safe = re.sub(r"[^\w.\-\u4e00-\u9fff]+", "_", fname)
+                apath = UPLOADS / f"ocr_{uuid.uuid4().hex[:8]}_{safe}"
+                apath.write_bytes(data)
+                attach = {"name": fname, "path": str(apath), "ext": fname.rsplit(".", 1)[-1].lower() if "." in fname else ""}
+                result = {"ok": True, "attachment": attach, "text": "", "lines": [],
+                          "engine": parsers.ocr_engine_name(),
+                          "parsed": {"title": "", "firstLine": "", "lyrics": "", "number": "", "note": ""}}
+                vis = parsers.ocr_image_vision(str(apath))
+                if vis:
+                    text, lines = vis
+                    result["text"] = text
+                    result["lines"] = lines
+                    parsed = parsers.parse_ocr_text(text, fname) or parsers.parse_song_from_ocr(lines)
+                    result["parsed"] = parsed
+                    result["engine"] = "Vision"
+                else:
+                    ai = ai_ocr_image(str(apath), store.data.get("settings", {}))
+                    if ai and (ai.get("title") or ai.get("lyrics")):
+                        result["text"] = ai.get("lyrics", "")
+                        result["parsed"] = ai
+                        result["engine"] = "AI视觉"
+                    else:
+                        result["parsed"]["note"] = "本机 OCR 暂不可用，请手动填写（或在设置中配置 AI 接口）"
+                return self._json(result)
             if path == "/api/import":
                 ctype = self.headers.get("Content-Type", "")
                 body = self._read_body()
@@ -635,6 +736,10 @@ class Handler(BaseHTTPRequestHandler):
                 s["themes"] = body.get("themes") or []
                 s["scenarios"] = body.get("scenarios") or []
                 s["musicTypes"] = body.get("musicTypes") or []
+                att = body.get("attachment")
+                if att and att.get("path"):
+                    s["attachments"].append({"name": att.get("name") or "拍照识别", "path": att.get("path"),
+                                             "ext": att.get("ext") or ""})
                 classify_song(s)
                 song_flags(s)
                 store.songs().append(s)
@@ -794,13 +899,19 @@ def main():
     seeded = ensure_seeded(store)
     if seeded:
         print("✓ 已写入示例数据（" + str(len(store.songs())) + " 首）")
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    bind_host = "0.0.0.0" if HOST == "0.0.0.0" else HOST
+    server = ThreadingHTTPServer((bind_host, PORT), Handler)
     url = f"http://127.0.0.1:{PORT}"
     print()
     print("  ┌──────────────────────────────────────────────┐")
     print("  │     赞美诗资料智能整理中心 · 本地版          │")
     print(f"  │   {url}                      │")
     print("  └──────────────────────────────────────────────┘")
+    if HOST == "0.0.0.0":
+        print("  📱 手机访问（同一 WiFi 下打开）:")
+        for ip in get_lan_ips():
+            print(f"     http://{ip}:{PORT}")
+        print("     若手机无法访问，请检查 Mac 防火墙是否放行 Python。")
     print("  按 Ctrl+C 停止服务")
     try:
         import webbrowser

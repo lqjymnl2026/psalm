@@ -79,6 +79,7 @@ function navigate() {
   const page = h.split("?")[0] || "dashboard";
   state.page = page;
   $$(".nav-item").forEach((a) => a.classList.toggle("active", a.dataset.page === page));
+  $$(".mn-item").forEach((a) => a.classList.toggle("active", a.dataset.page === page));
   const meta = {
     dashboard: ["工作台", "曲目总览与快速入口"],
     collection: ["曲目收集", "批量导入 Excel/CSV/PDF/Word/图片/音频 + 手工添加"],
@@ -210,7 +211,8 @@ function updatePills(d) {
   const ocr = d.ocrAvailable;
   const ai = !!(d.settings && d.settings.openaiKey);
   const op = $("#ocrPill"), ap = $("#aiPill");
-  op.textContent = "OCR：" + (ocr ? "已就绪" : "未安装（图片走人工）");
+  const eng = d.ocrEngine || "";
+  op.textContent = "OCR：" + (eng ? (eng === "Vision" ? "Vision已就绪" : "tesseract") : "未就绪");
   op.classList.toggle("ok", !!ocr);
   ap.textContent = "AI：" + (ai ? "已配置" : "本地引擎");
   ap.classList.toggle("ok", !!ai);
@@ -218,7 +220,23 @@ function updatePills(d) {
 
 /* ---------------- 曲目收集 ---------------- */
 async function renderCollection() {
+  const d = await api("/api/bootstrap");
+  state.cats = d.categories; state.settings = d.settings;
+  updatePills(d);
+  const lanUrls = (d.lanUrls || []);
+  const lanTip = lanUrls.length
+    ? `<div class="card card-pad section" style="border-color:#bcd8c6;background:#f0faf4">
+        <div class="card-title">📱 手机收集 <span class="sub">手机与 Mac 连同一 WiFi</span></div>
+        <div class="lan-tip">用手机浏览器打开下面地址，可直接<b>拍照上传</b>老赞美诗照片 / 录入新歌：<br>
+        ${lanUrls.map((u) => `<b class="mono">${esc(u)}</b>`).join("<br>")}<br>
+        <span class="muted">手机端支持：拍照上传 · 相册选择 · 手工新增</span></div>
+      </div>`
+    : `<div class="card card-pad section" style="background:#fffaf0">
+        <div class="card-title">📱 手机收集</div>
+        <div class="lan-tip muted">当前仅本机可访问。如需手机收集，请用 <span class="mono">./run.sh --lan</span> 或双击「启动-局域网.command」启动。</div>
+      </div>`;
   $("#content").innerHTML = `
+    ${lanTip}
     <div class="card card-pad section">
       <div class="card-title">批量导入
         <span class="sub">支持 Excel(.xlsx/.csv) · PDF · Word(.docx) · 图片 · 音频，可多选</span>
@@ -228,7 +246,14 @@ async function renderCollection() {
         <div class="dz-title">拖拽文件到这里，或点击选择文件</div>
         <div class="dz-sub">Excel 列名自动识别（歌名/歌曲名称/title…）· PDF/Word 自动切分曲目 · 图片/音频进入“待人工确认”</div>
       </div>
+      <div class="mob-upload-btns">
+        <button class="btn btn-primary" id="btnCamera"><span class="bu-ico">📷</span>拍照上传诗歌</button>
+        <button class="btn" id="btnGallery"><span class="bu-ico">🖼️</span>相册 / 文件</button>
+      </div>
       <input type="file" id="fileInput" multiple hidden
+        accept=".xlsx,.xlsm,.xls,.csv,.pdf,.docx,.doc,.jpg,.jpeg,.png,.bmp,.webp,.gif,.tif,.tiff,.mp3,.wav,.m4a,.aac,.flac,.ogg">
+      <input type="file" id="cameraInput" hidden accept="image/*" capture="environment">
+      <input type="file" id="galleryInput" hidden multiple
         accept=".xlsx,.xlsm,.xls,.csv,.pdf,.docx,.doc,.jpg,.jpeg,.png,.bmp,.webp,.gif,.tif,.tiff,.mp3,.wav,.m4a,.aac,.flac,.ogg">
       <div id="importProgress" class="mt12" hidden><span class="spin"></span>正在导入并智能整理，请稍候…</div>
       <div id="importResult" class="mt12"></div>
@@ -241,7 +266,23 @@ async function renderCollection() {
     </div>
 
     <div class="card card-pad section">
-      <div class="card-title">＋ 手工新增曲目</div>
+      <div class="card-title">＋ 手工新增曲目
+        <button class="btn btn-primary btn-sm" id="btnOcrFill">📷 拍照识别填表</button>
+      </div>
+      <div class="card card-pad mb16" id="ocrPanel" hidden style="background:#f6f9ff">
+        <div class="card-title">📷 拍照识别结果 <span class="sub" id="ocrEngineTag"></span>
+          <button class="btn btn-sm btn-ghost" id="ocrDiscard">放弃</button>
+        </div>
+        <div class="flex flex-wrap" style="align-items:flex-start">
+          <img id="ocrImg" class="ocr-img" alt="照片预览">
+          <div style="flex:1;min-width:220px">
+            <div class="hint" id="ocrNote"></div>
+            <div class="mt8 small muted">识别到的文字（供核对）：</div>
+            <pre id="ocrText" class="ocr-text"></pre>
+          </div>
+        </div>
+        <div class="mt8 hint">已自动填入上方表单的<b>歌名 / 首句 / 歌词</b>，请核对或修改后点「保存曲目」。</div>
+      </div>
       <div class="form-grid">
         <div class="form-group"><label>歌曲名称 *</label><input id="f_title" placeholder="例：奇异恩典"></div>
         <div class="form-group"><label>首句</label><input id="f_first" placeholder="例：奇异恩典，何等甘甜"></div>
@@ -276,6 +317,21 @@ async function renderCollection() {
   });
   fi.addEventListener("change", () => { if (fi.files.length) uploadFiles(fi.files); fi.value = ""; });
 
+  $("#btnCamera").addEventListener("click", () => $("#cameraInput").click());
+  $("#btnGallery").addEventListener("click", () => $("#galleryInput").click());
+  $("#btnOcrFill").addEventListener("click", () => $("#cameraInput").click());
+  $("#ocrDiscard").addEventListener("click", () => {
+    state.pendingPhoto = null;
+    if (state.photoUrl) { URL.revokeObjectURL(state.photoUrl); state.photoUrl = null; }
+    $("#ocrPanel").hidden = true;
+  });
+  $("#cameraInput").addEventListener("change", () => {
+    const f = $("#cameraInput").files[0];
+    $("#cameraInput").value = "";
+    if (f) handleOcrPhoto(f);
+  });
+  $("#galleryInput").addEventListener("change", () => { if ($("#galleryInput").files.length) uploadFiles($("#galleryInput").files); $("#galleryInput").value = ""; });
+
   $("#saveManual").addEventListener("click", async () => {
     const title = $("#f_title").value.trim();
     if (!title) return toast("请填写歌曲名称", "warn");
@@ -289,12 +345,16 @@ async function renderCollection() {
       scenarios: chipSelectValue("scenario"), musicTypes: chipSelectValue("type"),
       status: "pending",
     };
+    if (state.pendingPhoto) body.attachment = state.pendingPhoto;
     const btn = $("#saveManual"); btn.disabled = true;
     try {
       const d = await api("/api/songs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       toast(`已保存《${d.song.title}》，AI 自动分类完成`);
       ["f_title", "f_first", "f_number", "f_lyricist", "f_composer", "f_translator", "f_tune", "f_key", "f_meter", "f_source", "f_comment", "f_lyrics"].forEach((i) => $("#" + i).value = "");
       resetChipSelect("theme"); resetChipSelect("scenario"); resetChipSelect("type");
+      state.pendingPhoto = null;
+      if (state.photoUrl) { URL.revokeObjectURL(state.photoUrl); state.photoUrl = null; }
+      $("#ocrPanel").hidden = true;
     } catch (e) { toast(e.message, "err"); }
     btn.disabled = false;
   });
@@ -302,6 +362,39 @@ async function renderCollection() {
     $("#content").querySelectorAll("input, textarea").forEach((i) => i.value = "");
     resetChipSelect("theme"); resetChipSelect("scenario"); resetChipSelect("type");
   });
+}
+
+async function handleOcrPhoto(file) {
+  const prog = $("#importProgress"); prog.hidden = false;
+  try {
+    const fd = new FormData();
+    fd.append("file", file, file.name);
+    const d = await api("/api/ocr", { method: "POST", body: fd });
+    state.pendingPhoto = d.attachment;
+    if (d.parsed && (d.parsed.title || d.parsed.lyrics)) {
+      $("#f_title").value = d.parsed.title || "";
+      $("#f_first").value = d.parsed.firstLine || "";
+      $("#f_lyrics").value = d.parsed.lyrics || "";
+    }
+    showOcrPanel(file, d);
+    toast(d.parsed?.note || "识别完成", d.parsed?.title ? "ok" : "warn");
+  } catch (e) {
+    toast("识别失败：" + e.message, "err");
+  }
+  prog.hidden = true;
+}
+
+function showOcrPanel(file, d) {
+  const panel = $("#ocrPanel");
+  if (!panel) return;
+  if (state.photoUrl) URL.revokeObjectURL(state.photoUrl);
+  state.photoUrl = URL.createObjectURL(file);
+  $("#ocrImg").src = state.photoUrl;
+  $("#ocrEngineTag").textContent = "引擎：" + (d.engine || "—") + " · " + (d.lines?.length || 0) + " 行";
+  $("#ocrNote").textContent = d.parsed?.note || "";
+  $("#ocrText").textContent = d.text || "（未识别到文字）";
+  panel.hidden = false;
+  panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 async function uploadFiles(files) {
@@ -361,8 +454,8 @@ async function renderOrganize() {
       <div class="grid-3 mt12">
         <div class="card card-pad">
           <div class="card-title small">OCR 引擎</div>
-          <div>${d.ocrAvailable ? "✅ 已检测到 tesseract（chi_sim）" : "⚠️ 未检测到 tesseract"}</div>
-          <div class="hint mt8">安装后可自动识别图片中的歌名与歌词：<span class="mono">brew install tesseract tesseract-lang</span></div>
+          <div>${d.ocrAvailable ? "✅ OCR 已就绪（" + esc(d.ocrEngine || "Vision") + "，支持中文）" : "⚠️ OCR 未就绪"}</div>
+          <div class="hint mt8">手机拍照后自动识别歌名与歌词并填入表单。${d.ocrAvailable ? "" : "可在本机安装 tesseract+chi_sim，或在设置中配置 AI 接口。"}</div>
         </div>
         <div class="card card-pad">
           <div class="card-title small">AI 识别引擎</div>

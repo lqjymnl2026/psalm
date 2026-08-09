@@ -9,6 +9,8 @@ import re
 import shutil
 import subprocess
 import tempfile
+import json
+import pathlib
 from difflib import SequenceMatcher
 
 # ---------------------------------------------------------------- 列名自动匹配
@@ -246,12 +248,13 @@ def parse_docx_bytes(data: bytes, filename: str):
 
 
 # ---------------------------------------------------------------- 图片 OCR（可插拔）
-def ocr_available() -> bool:
-    return shutil.which("tesseract") is not None
-
-
 def ocr_image(path: str):
-    """调用系统 tesseract（需安装 chi_sim）。返回文本；失败返回 None。"""
+    """优先 macOS Vision，其次系统 tesseract。返回文本；失败返回 None。"""
+    v = ocr_image_vision(path)
+    if v:
+        return v[0]
+    if not shutil.which("tesseract"):
+        return None
     langs = "chi_sim+eng"
     try:
         out = subprocess.run(
@@ -319,3 +322,110 @@ def parse_upload(filename: str, data: bytes, dest_dir: str):
         kind = "other"
 
     return songs, warns, {"kind": kind, **attachment}
+
+
+# ---------------------------------------------------------------- macOS Vision OCR
+def ensure_ocr_tool():
+    """确保编译好的 Vision OCR 工具存在。返回路径或 None。"""
+    tools = pathlib.Path(__file__).resolve().parent / "tools"
+    tool = tools / "ocr_tool"
+    src = tools / "ocr_tool.swift"
+    if tool.exists() and src.exists() and tool.stat().st_mtime >= src.stat().st_mtime:
+        return str(tool)
+    swiftc = shutil.which("swiftc")
+    if not swiftc or not src.exists():
+        return None
+    cache = tools / ".cache"
+    cache.mkdir(exist_ok=True)
+    try:
+        subprocess.run([swiftc, "-O", f"-Xcc", f"-fmodules-cache-path={cache}",
+                        str(src), "-o", str(tool)], capture_output=True, timeout=240)
+    except Exception:
+        return None
+    return str(tool) if tool.exists() else None
+
+
+def ocr_engine_name():
+    if ensure_ocr_tool():
+        return "Vision"
+    if shutil.which("tesseract"):
+        return "tesseract"
+    return ""
+
+
+def ocr_available():
+    return bool(ocr_engine_name())
+
+
+def ocr_image_vision(path):
+    """调用 macOS Vision（中文+英文）。返回 (text, lines) 或 None。"""
+    tool = ensure_ocr_tool()
+    if not tool:
+        return None
+    try:
+        out = subprocess.run([tool, path], capture_output=True, timeout=150)
+        if out.returncode != 0:
+            return None
+        lines = json.loads(out.stdout.decode("utf-8"))
+        if not lines:
+            return None
+        text = "\n".join(l.get("text", "") for l in lines if l.get("text"))
+        return (text, lines) if text.strip() else None
+    except Exception:
+        return None
+
+
+def parse_song_from_ocr(lines, source=""):
+    """从 OCR 行（已按从上到下排序）启发式提取 歌名/首句/歌词。"""
+    def is_noise(t):
+        t = t.strip()
+        if not t or len(t) < 2:
+            return True
+        if re.fullmatch(r"[\d\s\-.—·]{1,10}", t):
+            return True
+        if re.match(r"^(第\s*\d+\s*(首|页)|page\s*\d+|\d+\s*页)", t, re.I):
+            return True
+        return False
+
+    rows = [l for l in lines if not is_noise(l.get("text", ""))]
+    if not rows:
+        return {"title": "", "firstLine": "", "lyrics": "", "number": "", "note": "未识别出文字"}
+    number = ""
+    m = re.search(r"第\s*(\d{1,4})\s*首", " ".join(l.get("text", "") for l in rows))
+    if m:
+        number = m.group(1)
+    # 标题启发式：高度显著大于中位数的短行（通常标题字号更大）
+    hs = sorted(l.get("h", 0) for l in rows)
+    med = hs[len(hs) // 2] if hs else 0
+    title = ""
+    for l in rows:
+        t = l.get("text", "").strip()
+        if 2 <= len(t) <= 14 and l.get("h", 0) >= med * 1.1 and not re.search(r"[，。；：、？！…]", t):
+            title = t
+            break
+    if not title and rows:
+        t0 = rows[0].get("text", "").strip()
+        if 2 <= len(t0) <= 16:
+            title = t0
+    lyrics_lines = [l.get("text", "").strip() for l in rows
+                    if l.get("text", "").strip() != title and not is_noise(l.get("text", ""))]
+    lyrics = "\n".join(lyrics_lines)
+    if not title:
+        note = "未可靠识别歌名，请手动核对"
+    elif not lyrics:
+        note = "识别到歌名但未识别到歌词，请手动补充"
+    else:
+        note = "已自动提取歌名与歌词，请核对后保存"
+    return {"title": title, "firstLine": (lyrics_lines[0] if lyrics_lines else ""),
+            "lyrics": lyrics, "number": number, "note": note}
+
+
+def parse_ocr_text(text: str, source=""):
+    """OCR 全文 → 若含编号结构则取第一首。返回 dict 或 None。"""
+    songs, _warns = segment_hymn_text(text, source)
+    if songs and songs[0].get("number"):
+        s = songs[0]
+        return {"title": s["title"], "firstLine": s.get("firstLine", ""),
+                "lyrics": s.get("lyrics", ""), "number": s.get("number", ""),
+                "note": "已自动提取（识别到编号" + s.get("number", "") + "），请核对后保存"}
+    return None
