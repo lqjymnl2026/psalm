@@ -11,3 +11,5 @@ work/
 
 tools/ocr_tool
 tools/.cache/
+
+.ghconfig/

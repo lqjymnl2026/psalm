@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.hymncenter.server</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/macbook/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3</string>
+    <string>/Users/macbook/Documents/Codex/2026-08-10/new-chat/hymn-center/app.py</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/macbook/Documents/Codex/2026-08-10/new-chat/hymn-center</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOST</key><string>0.0.0.0</string>
+    <key>PORT</key><string>8787</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/hymn-center.log</string>
+  <key>StandardErrorPath</key><string>/tmp/hymn-center.err.log</string>
+</dict>
+</plist>

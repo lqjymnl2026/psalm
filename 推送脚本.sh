@@ -12,6 +12,10 @@ GH=""
 for cand in "$(command -v gh 2>/dev/null)" "/Users/macbook/bin/gh"; do
   if [ -n "$cand" ] && [ -x "$cand" ]; then GH="$cand"; break; fi
 done
+# 若项目内存在 .ghconfig（本机自动登录生成），优先使用，避免重复登录
+if [ -f "$(dirname "$0")/.ghconfig/hosts.yml" ]; then
+  export GH_CONFIG_DIR="$(dirname "$0")/.ghconfig"
+fi
 
 if [ -z "$GH" ]; then
   echo "❌ 未找到 GitHub CLI (gh)。请先安装："
