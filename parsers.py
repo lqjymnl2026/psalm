@@ -1,16 +1,19 @@
 # -*- coding: utf-8 -*-
-"""导入解析：Excel / CSV / PDF / Word / 图片 / 音频 → 曲目字典列表。"""
+"""导入解析：Excel / CSV / PDF / Word / 图片 / 音频 → 曲目字典列表。
+识别策略：能提取什么就提取什么，重点保证「歌名 + 歌词」不丢。
+PDF：文字层提取失败 → 逐页渲染图片 OCR（Vision → tesseract → AI）。
+"""
 from __future__ import annotations
 
 import csv
 import io
+import json
 import os
+import pathlib
 import re
 import shutil
 import subprocess
 import tempfile
-import json
-import pathlib
 from difflib import SequenceMatcher
 
 # ---------------------------------------------------------------- 列名自动匹配
@@ -41,12 +44,10 @@ def normalize_header(h: str) -> str:
 
 
 def match_column(header: str):
-    """返回标准字段名；找不到返回 None。"""
     key = normalize_header(header)
     if key in _HEADER_CACHE:
         return _HEADER_CACHE[key]
     result = None
-    # 1) 精确匹配别名
     for field, aliases in COLUMN_ALIASES.items():
         for a in aliases:
             if normalize_header(a) == key:
@@ -54,7 +55,6 @@ def match_column(header: str):
                 break
         if result:
             break
-    # 2) 模糊匹配
     if not result and key:
         best, best_r = None, 0.0
         for field, aliases in COLUMN_ALIASES.items():
@@ -77,7 +77,6 @@ def _clean(value):
 
 
 def _map_rows(headers, rows):
-    """headers: 原始表头列表; rows: 数据行列表 → [song dict]"""
     mapped = {}
     for i, h in enumerate(headers):
         f = match_column(h)
@@ -97,7 +96,6 @@ def _map_rows(headers, rows):
 
 # ---------------------------------------------------------------- Excel / CSV
 def parse_excel_bytes(data: bytes, filename: str):
-    """返回 (songs, warnings)"""
     name = filename.lower()
     if name.endswith(".csv"):
         return _parse_csv_bytes(data)
@@ -115,8 +113,7 @@ def parse_excel_bytes(data: bytes, filename: str):
 def _try_decode_csv(data: bytes):
     for enc in ("utf-8-sig", "utf-8", "gb18030", "gbk", "big5"):
         try:
-            text = data.decode(enc)
-            return text, enc
+            return data.decode(enc), enc
         except UnicodeDecodeError:
             continue
     return data.decode("utf-8", errors="replace"), "utf-8"
@@ -124,9 +121,8 @@ def _try_decode_csv(data: bytes):
 
 def _parse_csv_bytes(data: bytes):
     text, enc = _try_decode_csv(data)
-    sniffer = csv.Sniffer()
     try:
-        dialect = sniffer.sniff(text[:4096], delimiters=",;\t")
+        dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t")
     except Exception:
         dialect = csv.excel
     reader = list(csv.reader(io.StringIO(text), dialect))
@@ -137,91 +133,174 @@ def _parse_csv_bytes(data: bytes):
     return songs, []
 
 
-# ---------------------------------------------------------------- 曲目切分（PDF / Word 共用）
-_TITLE_RE = re.compile(r"^\s*(?:第\s*)?(\d{1,4})\s*[、.．。)）\]\-\s:：]+\s*(\S.{0,40}?)\s*$")
+# ---------------------------------------------------------------- 文本切分（宽松）
 _SONG_NO_RE = re.compile(r"^\s*(?:第\s*)?(\d{1,4})\s*[、.．。)）\]\-\s:：]+\s*(\S.{0,40})$")
-_PAGE_RE = re.compile(r"^\s*(?:[-—]*\s*)?(\d{1,4})\s*(?:页)?\s*$")
 _HYMNBOOK_RE = re.compile(r"(?:赞美诗|诗歌|圣诗|颂赞)[^0-9]{0,12}?(?:第\s*)?(\d{1,4})\s*首?[：:\s]*(\S{2,40})")
+_ANY_PUNCT = re.compile(r"[，。；：？！、…,.;:?!]")
+_NOISE_RE = re.compile(r"^(第\s*\d{1,4}\s*(首|页)|page\s*\d+|\d{1,4}\s*页|目录|附录|序\s*$)", re.I)
 
 
-def _looks_like_title(s: str) -> bool:
-    t = s.strip()
+def _is_noise_line(t: str) -> bool:
+    t = t.strip()
     if not t:
+        return True
+    if re.fullmatch(r"[\d\s\-—.。·()（）]+", t):
+        return True
+    if _NOISE_RE.match(t):
+        return True
+    if re.search(r"^\d{1,3}\s*$", t):
+        return True
+    return False
+
+
+def _is_title_candidate(t: str) -> bool:
+    """歌名候选：短、无标点、含中英文文字。"""
+    t = t.strip()
+    if len(t) < 2 or len(t) > 20:
         return False
-    if len(t) > 42:
+    if _ANY_PUNCT.search(t):
+        return False
+    return bool(re.search(r"[\u4e00-\u9fffA-Za-z]", t))
+
+
+def _looks_like_title(t: str) -> bool:
+    t = t.strip()
+    if not t or len(t) > 42:
         return False
     if re.fullmatch(r"[\d\s\-—.。、()（）页pP]{1,10}", t):
         return False
-    if re.search(r"[\u4e00-\u9fffA-Za-z]", t) is None:
-        return False
-    if re.search(r"页\s*$", t) or re.search(r"^page\s*\d+", t, re.I):
+    if not re.search(r"[\u4e00-\u9fffA-Za-z]", t):
         return False
     return True
 
 
+def _entry_to_song(e: dict, source: str) -> dict:
+    lyrics = e.get("lyrics", "").strip()
+    title = e.get("title", "").strip()
+    number = e.get("number", "")
+    lines = [l for l in lyrics.splitlines() if l.strip()]
+    if not title and lines and _is_title_candidate(lines[0]) and len(lines[0].strip()) <= 16:
+        # 无编号时，把第一行短句当作歌名并从歌词中移除
+        title = lines[0].strip()
+        lines = lines[1:]
+        lyrics = "\n".join(lines).strip()
+    first = lines[0].strip() if lines else ""
+    return {"title": title, "number": number, "lyrics": lyrics, "firstLine": first, "source": source}
+
+
+def _segment_by_titles(lines, source):
+    """无编号时的宽松切分：短行（无标点）视为歌名，其后为歌词。"""
+    entries = []
+    current = None
+    for raw in lines:
+        t = raw.strip()
+        if not t or _is_noise_line(t):
+            continue
+        if _is_title_candidate(t):
+            if current and current["lyrics"].strip():
+                entries.append(current)
+            current = {"number": "", "title": t, "lyrics": ""}
+        else:
+            if current is None:
+                current = {"number": "", "title": "", "lyrics": ""}
+            current["lyrics"] += (raw.strip() + "\n")
+    if current and (current["lyrics"].strip() or current["title"]):
+        entries.append(current)
+    return [_entry_to_song(e, source) for e in entries]
+
+
 def segment_hymn_text(text: str, source: str):
-    """把整篇文本切分为 [{number, title, lyrics}]；返回 (songs, warnings)"""
+    """把整篇文本切分为 [{number,title,lyrics}]。优先编号模式，其次标题行宽松模式。"""
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     lines = [l.rstrip() for l in text.split("\n")]
     entries = []
     current = None
     for raw in lines:
-        line = raw.strip()
-        if not line:
+        t = raw.strip()
+        if not t:
             continue
-        m = _SONG_NO_RE.match(line) or _HYMNBOOK_RE.search(line)
+        m = _SONG_NO_RE.match(t) or _HYMNBOOK_RE.search(t)
         if m and _looks_like_title(m.group(2)):
             if current:
                 entries.append(current)
-            number = m.group(1)
-            title = re.sub(r"[\s]+", " ", m.group(2)).strip(" \t-—。.，,")
-            current = {"number": number, "title": title, "lyrics": ""}
+            current = {"number": m.group(1),
+                       "title": re.sub(r"\s+", " ", m.group(2)).strip(" \t-—。.，,"),
+                       "lyrics": ""}
             continue
         if current is not None:
-            current["lyrics"] += (line + "\n")
-        else:
-            # 文本开头没有编号，尝试把第一行当作标题
-            if _looks_like_title(line):
-                current = {"number": "", "title": line[:40], "lyrics": ""}
+            current["lyrics"] += (raw + "\n")
     if current:
         entries.append(current)
-
-    songs = []
-    for e in entries:
-        lyrics = e["lyrics"].strip()
-        songs.append({
-            "title": e["title"],
-            "number": e["number"],
-            "lyrics": lyrics,
-            "firstLine": (lyrics.splitlines()[0].strip() if lyrics else ""),
-            "source": source,
-        })
-    if not songs:
-        return [], ["未识别出曲目编号，请人工拆分或改用 Excel 导入"]
-    # 若存在带编号的曲目，则丢弃无编号的条目（通常为封面/书名行）
-    if any(s.get("number") for s in songs):
-        songs = [s for s in songs if s.get("number")]
-    return songs, []
+    songs = [_entry_to_song(e, source) for e in entries if e["title"] or e["lyrics"].strip()]
+    numbered = [s for s in songs if s.get("number")]
+    if numbered:
+        return numbered, []
+    if songs:
+        return songs, []
+    return _segment_by_titles(lines, source), []
 
 
-# ---------------------------------------------------------------- PDF
-def parse_pdf_bytes(data: bytes, filename: str):
-    import pdfplumber
+# ---------------------------------------------------------------- PDF（含扫描版 OCR 回退）
+def render_pdf_pages(data: bytes, scale: float = 2.2):
+    """把 PDF 每页渲染为 PIL 图像（供 OCR 识别扫描版）。"""
+    import pypdfium2 as pdfium
+    pdf = pdfium.PdfDocument(data)
+    imgs = []
+    for page in pdf:
+        try:
+            bitmap = page.render(scale=scale)
+            imgs.append(bitmap.to_pil().convert("RGB"))
+        except Exception:
+            continue
+    return imgs
+
+
+def parse_pdf_bytes(data: bytes, filename: str, settings=None):
     warnings = []
     pages_text = []
-    with pdfplumber.open(io.BytesIO(data)) as pdf:
-        for pg in pdf.pages:
-            try:
-                t = pg.extract_text() or ""
-            except Exception as e:  # pragma: no cover
-                warnings.append(f"第 {pg.page_number} 页解析失败: {e}")
-                continue
-            pages_text.append(t)
+    try:
+        import pdfplumber
+        with pdfplumber.open(io.BytesIO(data)) as pdf:
+            for pg in pdf.pages:
+                try:
+                    pages_text.append(pg.extract_text() or "")
+                except Exception:
+                    pages_text.append("")
+    except Exception:
+        pages_text = [""]
     full = "\n".join(pages_text)
+    ocr_used = False
+    if len(full.strip()) < 30:
+        # 文字层不足 → 疑似扫描版：渲染成图片再 OCR
+        try:
+            imgs = render_pdf_pages(data)
+        except Exception:
+            imgs = []
+        ocr_parts = []
+        for im in imgs:
+            tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+            tmp.close()
+            try:
+                im.save(tmp.name)
+                text, engine, ai = recognize_image_full(tmp.name, settings)
+                if text and text.strip():
+                    ocr_parts.append(text.strip())
+            finally:
+                try:
+                    os.unlink(tmp.name)
+                except OSError:
+                    pass
+        if ocr_parts:
+            full = "\n".join(ocr_parts)
+            ocr_used = True
+            warnings.append("扫描版 PDF：已通过 OCR 识别文字，请核对")
     if not full.strip():
-        return [], ["PDF 中没有可提取的文字（可能是扫描版，需 OCR）"]
+        return [], ["PDF 无法识别文字（扫描版需 OCR：请安装 tesseract 或在设置中配置 AI 接口）"]
     songs, seg_warn = segment_hymn_text(full, filename)
     warnings.extend(seg_warn)
+    for s in songs:
+        if ocr_used:
+            s.setdefault("flags", []).append("PDF-OCR")
     return songs, warnings
 
 
@@ -234,7 +313,6 @@ def parse_docx_bytes(data: bytes, filename: str):
         t = p.text.strip()
         if t:
             parts.append(t)
-    # 表格内容
     for table in d.tables:
         for row in table.rows:
             cells = [c.text.strip() for c in row.cells if c.text.strip()]
@@ -247,86 +325,8 @@ def parse_docx_bytes(data: bytes, filename: str):
     return songs, warnings
 
 
-# ---------------------------------------------------------------- 图片 OCR（可插拔）
-def ocr_image(path: str):
-    """优先 macOS Vision，其次系统 tesseract。返回文本；失败返回 None。"""
-    v = ocr_image_vision(path)
-    if v:
-        return v[0]
-    if not shutil.which("tesseract"):
-        return None
-    langs = "chi_sim+eng"
-    try:
-        out = subprocess.run(
-            ["tesseract", path, "stdout", "-l", langs, "--psm", "6"],
-            capture_output=True, timeout=120,
-        )
-        if out.returncode != 0:
-            # 尝试纯英文
-            out = subprocess.run(["tesseract", path, "stdout", "-l", "eng", "--psm", "6"],
-                                 capture_output=True, timeout=120)
-        return out.stdout.decode("utf-8", errors="replace") if out.returncode == 0 else None
-    except Exception:
-        return None
-
-
-def parse_image_file(path: str, filename: str):
-    """图片：保存后尝试 OCR；不可用则标记待人工。"""
-    if ocr_available():
-        text = ocr_image(path)
-        if text and text.strip():
-            songs, warnings = segment_hymn_text(text, filename)
-            for s in songs:
-                s["flags"] = ["OCR识别"]
-            return songs, warnings
-        return [], ["图片 OCR 未识别出文字，请人工补充"]
-    return [], ["本机未安装 OCR（tesseract + chi_sim），图片已保存，请人工补充信息"]
-
-
-# ---------------------------------------------------------------- 音频
-def parse_audio_file(path: str, filename: str):
-    return [], ["音频暂不支持离线转写，请人工补充歌名与歌词"]
-
-
-# ---------------------------------------------------------------- 统一入口
-def parse_upload(filename: str, data: bytes, dest_dir: str):
-    """保存文件并解析。返回 (songs, warnings, attachment)"""
-    name = os.path.basename(filename)
-    safe = re.sub(r"[^\w.\-（）()\u4e00-\u9fff]+", "_", name)
-    path = os.path.join(dest_dir, f"{os.urandom(4).hex()}_{safe}")
-    with open(path, "wb") as f:
-        f.write(data)
-    ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
-    attachment = {"name": name, "path": path, "ext": ext}
-
-    if ext in ("xlsx", "xlsm", "xls"):
-        songs, warns = parse_excel_bytes(data, name)
-        kind = "excel"
-    elif ext == "csv":
-        songs, warns = _parse_csv_bytes(data)
-        kind = "csv"
-    elif ext == "pdf":
-        songs, warns = parse_pdf_bytes(data, name)
-        kind = "pdf"
-    elif ext in ("docx", "doc"):
-        songs, warns = parse_docx_bytes(data, name)
-        kind = "word"
-    elif ext in ("jpg", "jpeg", "png", "bmp", "webp", "gif", "tif", "tiff"):
-        songs, warns = parse_image_file(path, name)
-        kind = "image"
-    elif ext in ("mp3", "wav", "m4a", "aac", "flac", "ogg", "wma"):
-        songs, warns = parse_audio_file(path, name)
-        kind = "audio"
-    else:
-        songs, warns = [], [f"暂不支持的文件类型 .{ext}"]
-        kind = "other"
-
-    return songs, warns, {"kind": kind, **attachment}
-
-
 # ---------------------------------------------------------------- macOS Vision OCR
 def ensure_ocr_tool():
-    """确保编译好的 Vision OCR 工具存在。返回路径或 None。"""
     tools = pathlib.Path(__file__).resolve().parent / "tools"
     tool = tools / "ocr_tool"
     src = tools / "ocr_tool.swift"
@@ -358,7 +358,7 @@ def ocr_available():
 
 
 def ocr_image_vision(path):
-    """调用 macOS Vision（中文+英文）。返回 (text, lines) 或 None。"""
+    """macOS Vision（中文+英文）。返回 (text, lines) 或 None。"""
     tool = ensure_ocr_tool()
     if not tool:
         return None
@@ -375,8 +375,141 @@ def ocr_image_vision(path):
         return None
 
 
+def ocr_image_tesseract(path):
+    """tesseract（CPU，兼容无 GPU 环境；需安装 chi_sim）。"""
+    if not shutil.which("tesseract"):
+        return None
+    try:
+        out = subprocess.run(["tesseract", path, "stdout", "-l", "chi_sim+eng", "--psm", "6"],
+                             capture_output=True, timeout=120)
+        if out.returncode != 0:
+            out = subprocess.run(["tesseract", path, "stdout", "-l", "eng", "--psm", "6"],
+                                 capture_output=True, timeout=120)
+        t = out.stdout.decode("utf-8", errors="replace").strip()
+        return t or None
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------- AI 视觉识别（可选）
+def ai_ocr_image(path, settings=None):
+    """OpenAI 兼容视觉模型识别图片 → {title, firstLine, lyrics, number, note} 或 None。"""
+    if not settings:
+        return None
+    key = (settings.get("openaiKey") or "").strip()
+    base = (settings.get("openaiBase") or "https://api.openai.com/v1").rstrip("/")
+    model = settings.get("openaiModel") or "gpt-4o-mini"
+    if not key:
+        return None
+    import base64
+    import urllib.request
+    try:
+        b64 = base64.b64encode(pathlib.Path(path).read_bytes()).decode("utf-8")
+    except Exception:
+        return None
+    mime = "image/png"
+    prompt = ("你是赞美诗资料整理助手。请识别这张赞美诗图片中的文字，只输出 JSON（不要输出其他内容）："
+              '{"title":"歌名","firstLine":"歌词第一句","lyrics":"完整歌词，每句一行","number":"编号（没有则空字符串）"}')
+    body = json.dumps({"model": model, "temperature": 0.1, "messages": [{"role": "user", "content": [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+    ]}]}).encode("utf-8")
+    req = urllib.request.Request(base + "/chat/completions", data=body, headers={
+        "Authorization": "Bearer " + key, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        obj = json.loads(data["choices"][0]["message"]["content"])
+        return {"title": str(obj.get("title") or "").strip(),
+                "firstLine": str(obj.get("firstLine") or "").strip(),
+                "lyrics": str(obj.get("lyrics") or "").strip(),
+                "number": str(obj.get("number") or "").strip(),
+                "note": "由 AI 视觉识别，请核对后保存"}
+    except Exception:
+        return None
+
+
+def recognize_image_full(path, settings=None):
+    """三级识别：Vision → tesseract → AI。返回 (text, engine, ai_parsed)。"""
+    v = ocr_image_vision(path)
+    if v:
+        return v[0], "Vision", None
+    t = ocr_image_tesseract(path)
+    if t:
+        return t, "tesseract", None
+    if settings and settings.get("openaiKey"):
+        ai = ai_ocr_image(path, settings)
+        if ai and (ai.get("lyrics") or ai.get("title")):
+            txt = "\n".join(x for x in [ai.get("title"), ai.get("lyrics")] if x)
+            return txt, "AI", ai
+    return "", "", None
+
+
+def ocr_image(path):
+    v = ocr_image_vision(path)
+    if v:
+        return v[0]
+    return ocr_image_tesseract(path)
+
+
+def parse_image_file(path, filename, settings=None):
+    text, engine, ai = recognize_image_full(path, settings)
+    if text and text.strip():
+        if ai and ai.get("lyrics"):
+            songs = [{"title": ai.get("title", ""), "firstLine": ai.get("firstLine", ""),
+                      "lyrics": ai.get("lyrics", ""), "source": filename}]
+        else:
+            songs, _w = segment_hymn_text(text, filename)
+            if not songs:
+                songs = [{"title": "", "firstLine": "", "lyrics": text.strip(), "source": filename}]
+        for s in songs:
+            s.setdefault("flags", []).append("OCR识别")
+        return songs, []
+    return [], ["图片 OCR 未识别出文字（可安装 tesseract，或在设置中配置 AI 接口）"]
+
+
+# ---------------------------------------------------------------- 音频
+def parse_audio_file(path, filename):
+    return [], ["音频暂不支持离线转写，请人工补充歌名与歌词"]
+
+
+# ---------------------------------------------------------------- 统一入口
+def parse_upload(filename: str, data: bytes, dest_dir: str, settings=None):
+    name = os.path.basename(filename)
+    safe = re.sub(r"[^\w.\-（）()\u4e00-\u9fff]+", "_", name)
+    path = os.path.join(dest_dir, f"{os.urandom(4).hex()}_{safe}")
+    with open(path, "wb") as f:
+        f.write(data)
+    ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
+    attachment = {"name": name, "path": path, "ext": ext}
+
+    if ext in ("xlsx", "xlsm", "xls"):
+        songs, warns = parse_excel_bytes(data, name)
+        kind = "excel"
+    elif ext == "csv":
+        songs, warns = _parse_csv_bytes(data)
+        kind = "csv"
+    elif ext == "pdf":
+        songs, warns = parse_pdf_bytes(data, name, settings)
+        kind = "pdf"
+    elif ext in ("docx", "doc"):
+        songs, warns = parse_docx_bytes(data, name)
+        kind = "word"
+    elif ext in ("jpg", "jpeg", "png", "bmp", "webp", "gif", "tif", "tiff"):
+        songs, warns = parse_image_file(path, name, settings)
+        kind = "image"
+    elif ext in ("mp3", "wav", "m4a", "aac", "flac", "ogg", "wma"):
+        songs, warns = parse_audio_file(path, name)
+        kind = "audio"
+    else:
+        songs, warns = [], [f"暂不支持的文件类型 .{ext}"]
+        kind = "other"
+
+    return songs, warns, {"kind": kind, **attachment}
+
+
+# ---------------------------------------------------------------- OCR 结果解析（拍照填表用）
 def parse_song_from_ocr(lines, source=""):
-    """从 OCR 行（已按从上到下排序）启发式提取 歌名/首句/歌词。"""
     def is_noise(t):
         t = t.strip()
         if not t or len(t) < 2:
@@ -394,13 +527,12 @@ def parse_song_from_ocr(lines, source=""):
     m = re.search(r"第\s*(\d{1,4})\s*首", " ".join(l.get("text", "") for l in rows))
     if m:
         number = m.group(1)
-    # 标题启发式：高度显著大于中位数的短行（通常标题字号更大）
     hs = sorted(l.get("h", 0) for l in rows)
     med = hs[len(hs) // 2] if hs else 0
     title = ""
     for l in rows:
         t = l.get("text", "").strip()
-        if 2 <= len(t) <= 14 and l.get("h", 0) >= med * 1.1 and not re.search(r"[，。；：、？！…]", t):
+        if 2 <= len(t) <= 14 and l.get("h", 0) >= med * 1.1 and not _ANY_PUNCT.search(t):
             title = t
             break
     if not title and rows:
@@ -421,7 +553,6 @@ def parse_song_from_ocr(lines, source=""):
 
 
 def parse_ocr_text(text: str, source=""):
-    """OCR 全文 → 若含编号结构则取第一首。返回 dict 或 None。"""
     songs, _warns = segment_hymn_text(text, source)
     if songs and songs[0].get("number"):
         s = songs[0]

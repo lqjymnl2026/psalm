@@ -229,7 +229,8 @@ async function renderCollection() {
         <div class="card-title">📱 手机收集 <span class="sub">手机与 Mac 连同一 WiFi</span></div>
         <div class="lan-tip">用手机浏览器打开下面地址，可直接<b>拍照上传</b>老赞美诗照片 / 录入新歌：<br>
         ${lanUrls.map((u) => `<b class="mono">${esc(u)}</b>`).join("<br>")}<br>
-        <span class="muted">手机端支持：拍照上传 · 相册选择 · 手工新增</span></div>
+        <span class="muted">手机端支持：拍照上传 · 相册选择 · 手工新增</span><br>
+        <span class="muted">💡 在手机浏览器点「分享 / 更多 → 添加到主屏幕」，即可像 App 一样全屏使用。</span></div>
       </div>`
     : `<div class="card card-pad section" style="background:#fffaf0">
         <div class="card-title">📱 手机收集</div>
@@ -1025,6 +1026,9 @@ function bindGlobal() {
 
 (async function init() {
   bindGlobal();
+  if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
+    navigator.serviceWorker.register("/static/sw.js").catch(() => {});
+  }
   try { await refreshStats(); } catch (e) { /* server maybe starting */ }
   navigate();
 })();

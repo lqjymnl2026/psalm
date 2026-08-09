@@ -1,0 +1,17 @@
+{
+  "name": "赞美诗资料智能整理中心",
+  "short_name": "赞美诗中心",
+  "description": "赞美诗收集 · 拍照识别 · 自动分类 · 筛选 · 导出",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1e2942",
+  "theme_color": "#1e2942",
+  "icons": [
+    { "src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/static/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

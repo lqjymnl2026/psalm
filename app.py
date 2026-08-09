@@ -216,7 +216,8 @@ def handle_import(store, files):
     warnings_all = []
     for filename, data in files:
         try:
-            songs, warns, attach = parsers.parse_upload(filename, data, str(UPLOADS))
+            songs, warns, attach = parsers.parse_upload(filename, data, str(UPLOADS),
+                                               store.data.get("settings", {}))
         except Exception as e:
             traceback.print_exc()
             per_file.append({"file": filename, "ok": 0, "needsReview": 0, "duplicates": 0, "incomplete": 0, "errors": [str(e)]})
@@ -344,42 +345,6 @@ def ai_classify(song, settings):
             "difficulty": max(1, min(5, int(obj.get("difficulty", 3)))),
             "singability": max(1, min(5, int(obj.get("singability", 3)))),
         }
-    except Exception:
-        return None
-
-
-def ai_ocr_image(path, settings):
-    """用 OpenAI 兼容视觉模型识别图片文字 → {title, firstLine, lyrics, number} 或 None。"""
-    import base64
-    import urllib.request
-    key = (settings.get("openaiKey") or "").strip()
-    base = (settings.get("openaiBase") or "https://api.openai.com/v1").rstrip("/")
-    model = settings.get("openaiModel") or "gpt-4o-mini"
-    if not key:
-        return None
-    try:
-        b64 = base64.b64encode(Path(path).read_bytes()).decode("utf-8")
-    except Exception:
-        return None
-    mime = mimetypes.guess_type(path)[0] or "image/png"
-    prompt = ("你是赞美诗资料整理助手。请识别这张赞美诗图片中的文字，并输出 JSON（不要输出其他内容）："
-              '{"title":"歌名","firstLine":"歌词第一句","lyrics":"完整歌词，每句一行","number":"编号（没有则空字符串")}')
-    body = json.dumps({"model": model, "temperature": 0.1, "messages": [{"role": "user", "content": [
-        {"type": "text", "text": prompt},
-        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
-    ]}]}).encode("utf-8")
-    req = urllib.request.Request(base + "/chat/completions", data=body, headers={
-        "Authorization": "Bearer " + key, "Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=90) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        content = data["choices"][0]["message"]["content"]
-        obj = json.loads(content)
-        return {"title": str(obj.get("title") or "").strip(),
-                "firstLine": str(obj.get("firstLine") or "").strip(),
-                "lyrics": str(obj.get("lyrics") or "").strip(),
-                "number": str(obj.get("number") or "").strip(),
-                "note": "由 AI 视觉识别，请核对后保存"}
     except Exception:
         return None
 
@@ -711,7 +676,7 @@ class Handler(BaseHTTPRequestHandler):
                     result["parsed"] = parsed
                     result["engine"] = "Vision"
                 else:
-                    ai = ai_ocr_image(str(apath), store.data.get("settings", {}))
+                    ai = parsers.ai_ocr_image(str(apath), store.data.get("settings", {}))
                     if ai and (ai.get("title") or ai.get("lyrics")):
                         result["text"] = ai.get("lyrics", "")
                         result["parsed"] = ai
