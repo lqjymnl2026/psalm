@@ -86,7 +86,7 @@ def _is_public(path, method):
     if path in ("/", "/index.html", "/mobile", "/m", "/mobile.html", "/qr", "/phone",
                 "/api/bootstrap", "/api/songs/template", "/api/auth/check"):
         return True
-    if method == "POST" and path in ("/api/ocr", "/api/import", "/api/login"):
+    if method == "POST" and path in ("/api/ocr", "/api/import", "/api/login", "/api/jianpu/ocr"):
         return True
     if method == "POST" and path == "/api/songs":
         return True  # 手机端保存
@@ -866,6 +866,22 @@ class Handler(BaseHTTPRequestHandler):
                 ADMIN["hash"] = hashlib.sha256((salt + newp).encode("utf-8")).hexdigest()
                 _admin_path.write_text(json.dumps(ADMIN, ensure_ascii=False, indent=1), "utf-8")
                 return self._json({"ok": True, "msg": "密码已修改"})
+            if path == "/api/jianpu/ocr":
+                ctype = self.headers.get("Content-Type", "")
+                parts = parse_multipart(self._read_body(), ctype)
+                if not parts["files"]:
+                    return self._json({"ok": False, "msg": "未收到图片"}, 400)
+                fname, data = parts["files"][0]
+                safe = re.sub(r"[^\w.\-\u4e00-\u9fff]+", "_", fname)
+                apath = UPLOADS / f"jianpu_{uuid.uuid4().hex[:8]}_{safe}"
+                apath.write_bytes(data)
+                settings = store.data.get("settings", {})
+                if settings.get("openaiKey"):
+                    jp = parsers.ai_ocr_jianpu(str(apath), settings)
+                    if jp:
+                        return self._json({"ok": True, "jianpu": jp, "engine": "AI视觉"})
+                text, engine, _ai, _lines = parsers.recognize_image_full2(str(apath), settings)
+                return self._json({"ok": True, "text": text or "", "engine": engine or "本地OCR"})
             if path == "/api/ocr":
                 ctype = self.headers.get("Content-Type", "")
                 parts = parse_multipart(self._read_body(), ctype)

@@ -1027,6 +1027,39 @@ def ai_ocr_image(path, settings=None):
         return None
 
 
+def ai_ocr_jianpu(path, settings=None):
+    """AI 视觉：把简谱图片识别成可编辑简谱文本（本编辑器语法）。无 Key 返回 None。"""
+    if not settings or not settings.get("openaiKey"):
+        return None
+    import base64
+    import urllib.request
+    key = (settings.get("openaiKey") or "").strip()
+    base = (settings.get("openaiBase") or "https://api.openai.com/v1").rstrip("/")
+    model = settings.get("openaiModel") or "gpt-4o-mini"
+    try:
+        b64 = base64.b64encode(pathlib.Path(path).read_bytes()).decode("utf-8")
+    except Exception:
+        return None
+    prompt = ("你是简谱专家。请识别这张简谱图片，输出**可编辑的简谱文本**，规则："
+              "音符 1-7；休止 0；高音用单引号 1'，低音用逗号 1,；"
+              "八分音符 1_，十六分 1__，二分 1-，全音 1---，附点 1.；"
+              "小节线 |，反复 |: 和 :|；每行是同一行旋律，歌词行以 L: 开头逐字对应。"
+              "第一行先给调号拍号如 1=F 4/4。只输出简谱文本，不要任何解释。")
+    body = json.dumps({"model": model, "temperature": 0.1, "messages": [{"role": "user", "content": [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+    ]}]}).encode("utf-8")
+    req = urllib.request.Request(base + "/chat/completions", data=body, headers={
+        "Authorization": "Bearer " + key, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        txt = data["choices"][0]["message"]["content"].strip()
+        return txt or None
+    except Exception:
+        return None
+
+
 def recognize_image_full2(path, settings=None):
     """识别链：AI视觉(若配置Key) → Vision → tesseract.js → tesseract。返回 (text, engine, ai_parsed, lines)。"""
     if settings and settings.get("openaiKey"):
