@@ -125,7 +125,7 @@ def default_song(**kw):
         "id": "", "number": "", "title": "", "firstLine": "", "lyricist": "", "composer": "",
         "translator": "", "tune": "", "key": "", "meter": "", "source": "", "comment": "",
         "lyrics": "", "themes": [], "scenarios": [], "musicTypes": [],
-        "category": "", "subcategory": "",
+        "category": "", "subcategory": "", "uploader": "",
         "difficulty": 3, "difficultyStars": "★★★☆☆", "singability": 3, "singabilityStars": "★★★☆☆",
         "rating": 0, "status": "pending", "needsReview": False, "aiConfidence": 0,
         "flags": [], "dupGroup": None, "dupMatches": [], "dupResolved": False,
@@ -217,7 +217,7 @@ def resolve_duplicate(store, group, action, keep_id=None):
 
 
 # ---------------------------------------------------------------- 导入
-def handle_import(store, files):
+def handle_import(store, files, uploader=""):
     """files: [(filename, bytes)] → (summary)"""
     batch = f"B{store.next_seq():04d}"
     created = []
@@ -256,6 +256,7 @@ def handle_import(store, files):
             created.append(s)
 
     for s in created:
+        s["uploader"] = (uploader or "").strip()
         classify_song(s)
         song_flags(s)
     store.songs().extend(created)
@@ -365,7 +366,7 @@ def compute_stats(store):
     for s in songs:
         status_counts[s.get("status", "pending")] = status_counts.get(s.get("status", "pending"), 0) + 1
     theme_counts, scen_counts, type_counts = {}, {}, {}
-    cat_counts, sub_counts = {}, {}
+    cat_counts, sub_counts, up_counts = {}, {}, {}
     for s in songs:
         for t in s.get("themes") or []:
             theme_counts[t] = theme_counts.get(t, 0) + 1
@@ -377,6 +378,8 @@ def compute_stats(store):
             cat_counts[s["category"]] = cat_counts.get(s["category"], 0) + 1
         if s.get("subcategory"):
             sub_counts[s["subcategory"]] = sub_counts.get(s["subcategory"], 0) + 1
+        if s.get("uploader"):
+            up_counts[s["uploader"]] = up_counts.get(s["uploader"], 0) + 1
     dup_groups = len({s["dupGroup"] for s in songs if s.get("dupGroup")})
     rated = [s.get("rating") for s in songs if s.get("rating")]
     return {
@@ -394,12 +397,13 @@ def compute_stats(store):
         "imports": store.data.get("imports", [])[:8],
         "categories": sorted(cat_counts.items(), key=lambda x: -x[1]),
         "subcategories": sorted(sub_counts.items(), key=lambda x: -x[1])[:10],
+        "uploaders": sorted(up_counts.items(), key=lambda x: -x[1])[:20],
     }
 
 
 # ---------------------------------------------------------------- 筛选
 def apply_filters(songs, q="", theme="", scenario="", mtype="", status="", rating=0,
-                  source="", needs_review=False, dup=False, statuses=None, category="", subcategory=""):
+                  source="", needs_review=False, dup=False, statuses=None, category="", subcategory="", uploader=""):
     res = [s for s in songs if s.get("status") != "merged"]
     if q:
         ql = q.strip().lower()
@@ -408,6 +412,8 @@ def apply_filters(songs, q="", theme="", scenario="", mtype="", status="", ratin
                or ql in (s.get("lyricist") or "").lower()
                or ql in (s.get("composer") or "").lower()
                or ql in (s.get("tune") or "").lower()]
+    if uploader:
+        res = [s for s in res if s.get("uploader") == uploader]
     if category:
         res = [s for s in res if s.get("category") == category]
     if subcategory:
@@ -667,6 +673,7 @@ class Handler(BaseHTTPRequestHandler):
             needs_review=gv("needsReview", "0") == "1", dup=gv("dup", "0") == "1",
             statuses=(gv("statuses", "").split(",") if gv("statuses", "") else None),
             category=gv("category"), subcategory=gv("subcategory"),
+            uploader=gv("uploader"),
         )
         songs = sort_songs(songs, gv("sort", "number"))
         def _int(v, d):
@@ -715,7 +722,8 @@ class Handler(BaseHTTPRequestHandler):
                 files = parts.get("files") or []
                 if not files:
                     return self._json({"ok": False, "msg": "未收到文件"})
-                summary = handle_import(store, files)
+                up = (parts.get("fields") or {}).get("uploader", "")
+                summary = handle_import(store, files, up)
                 return self._json({"ok": True, "summary": summary})
             if path == "/api/songs":
                 body = self._json_body()
@@ -725,6 +733,7 @@ class Handler(BaseHTTPRequestHandler):
                 s["themes"] = body.get("themes") or []
                 s["scenarios"] = body.get("scenarios") or []
                 s["musicTypes"] = body.get("musicTypes") or []
+                s["uploader"] = (body.get("uploader") or "").strip()
                 att = body.get("attachment")
                 if att and att.get("path"):
                     s["attachments"].append({"name": att.get("name") or "拍照识别", "path": att.get("path"),
@@ -823,6 +832,8 @@ class Handler(BaseHTTPRequestHandler):
             for k in ("themes", "scenarios", "musicTypes"):
                 if k in body:
                     s[k] = body[k] or []
+            if body.get("uploader") is not None:
+                s["uploader"] = (body.get("uploader") or "").strip()
             if body.get("category") is not None:
                 s["category"] = body.get("category") or ""
             if body.get("subcategory") is not None:

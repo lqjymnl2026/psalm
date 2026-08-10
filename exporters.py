@@ -12,7 +12,8 @@ STATUS_LABELS = {
 }
 
 FIELDS = [
-    ("number", "编号"), ("title", "歌名"), ("category", "大类"), ("subcategory", "细类"),
+    ("number", "编号"), ("title", "歌名"), ("uploader", "上传人"),
+    ("category", "大类"), ("subcategory", "细类"),
     ("firstLine", "首句"), ("lyricist", "作者"),
     ("composer", "作曲"), ("translator", "译者"), ("tune", "曲调"), ("key", "调性"),
     ("meter", "格律"), ("themes", "主题"), ("scenarios", "场景"), ("musicTypes", "类型"),

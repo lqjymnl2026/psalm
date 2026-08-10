@@ -199,6 +199,11 @@ async function renderDashboard() {
       <div class="grid-2">${renderBars(stageFunnel, "gold")}</div>
     </div>
     ${importCard}
+    ${(st.uploaders && st.uploaders.length) ? `
+    <div class="card card-pad">
+      <div class="card-title">上传人统计 <span class="sub">用于对接收集人</span></div>
+      ${renderBars(st.uploaders.slice(0, 10), "gold")}
+    </div>` : ""}
     <div class="card card-pad">
       <div class="card-title">快捷入口</div>
       <div class="flex flex-wrap">
@@ -584,6 +589,7 @@ function filterOptionsHTML(selected = "") {
   const c = state.cats;
   const opt = (list) => list.map((x) => `<option value="${esc(x)}" ${x === selected ? "selected" : ""}>${esc(x)}</option>`).join("");
   return `
+    ${(state.uploaders && state.uploaders.length) ? `<select id="flt_uploader" title="上传人"><option value="">上传人：全部</option>${state.uploaders.map((x) => `<option value="${esc(x)}">${esc(x)}</option>`).join("")}</select>` : ""}
     ${c.hymnbook ? `
     <select id="flt_category" title="大类"><option value="">大类：全部</option>${Object.keys(c.hymnbook).map((x) => `<option value="${esc(x)}">${esc(x)}</option>`).join("")}</select>
     <select id="flt_subcategory" title="细类"><option value="">细类：全部</option>${Object.entries(c.hymnbook).flatMap(([k, v]) => Object.keys(v).filter((x) => x !== "大类词").map((x) => `<option value="${esc(x)}">${esc(x)}</option>`)).join("")}</select>` : ""}
@@ -603,12 +609,14 @@ function readFilters() {
     type: $("#flt_type")?.value || "", status: $("#flt_status")?.value || "", rating: $("#flt_rating")?.value || 0,
     sort: $("#flt_sort")?.value || "number", needsReview: $("#flt_review")?.checked || false, dup: $("#flt_dup")?.checked || false,
     category: $("#flt_category")?.value || "", subcategory: $("#flt_subcategory")?.value || "",
+    uploader: $("#flt_uploader")?.value || "",
   };
 }
 
 async function renderLibrary() {
   const d = await api("/api/bootstrap");
   state.cats = d.categories;
+  state.uploaders = (d.stats.uploaders || []).map((x) => x[0]);
   await loadLibrary();
 }
 
@@ -643,13 +651,14 @@ async function loadLibrary() {
       <div class="table-wrap">
       <table class="grid-table">
         <thead><tr>
-          <th><input type="checkbox" id="checkAll"></th><th>编号</th><th>歌名</th><th>首句</th><th>作者/作曲</th><th>主题</th><th>难度</th><th>评分</th><th>状态</th><th>操作</th>
+          <th><input type="checkbox" id="checkAll"></th><th>编号</th><th>歌名</th><th>上传人</th><th>首句</th><th>作者/作曲</th><th>主题</th><th>难度</th><th>评分</th><th>状态</th><th>操作</th>
         </tr></thead>
         <tbody>${d.items.map((s) => `
           <tr>
             <td><input type="checkbox" class="row-check" value="${esc(s.id)}" ${state.selected.has(s.id) ? "checked" : ""}></td>
             <td>${esc(s.number || "-")}</td>
             <td class="song-title">${esc(s.title || "(未命名)")}${flagsHtml(s)}${s.title ? "" : ""}</td>
+            <td>${s.uploader ? `<span class="chip blue">${esc(s.uploader)}</span>` : "—"}</td>
             <td class="muted">${esc(short(s.firstLine, 24))}</td>
             <td class="muted small">${esc(short(s.lyricist, 14))}${s.composer ? "<br>" + esc(short(s.composer, 14)) : ""}</td>
             <td>${s.category ? `<span class="chip gold">${esc(s.category)}·${esc(s.subcategory || "")}</span>` : chips((s.themes || []).slice(0, 2))}</td>
@@ -758,7 +767,7 @@ function reviewCard(s) {
         <div class="rc-title">${esc(s.title || "(未命名)")} ${statusChip(s)}</div>
         <div class="muted small">${esc(s.number || "")}</div>
       </div>
-      <div class="rc-meta">${esc(s.lyricist || "")}${s.composer ? " · " + esc(s.composer) : ""}</div>
+      <div class="rc-meta">${s.uploader ? "👤 " + esc(s.uploader) + " · " : ""}${esc(s.lyricist || "")}${s.composer ? " · " + esc(s.composer) : ""}</div>
       ${s.category ? `<div><span class="chip gold">${esc(s.category)}·${esc(s.subcategory || "")}</span></div>` : ""}
       <div>${chips((s.themes || []).slice(0, 3))}${chips((s.scenarios || []).slice(0, 2), "gold")}</div>
       <div class="flex small muted">难度 ${esc(s.difficultyStars || "")} · 会众适唱 ${esc(s.singabilityStars || "")} · AI 置信 ${Math.round((s.aiConfidence || 0) * 100)}%</div>
@@ -951,6 +960,7 @@ async function openSongModal(id) {
     <div class="form-grid">
       <div class="form-group"><label>歌曲名称 *</label><input id="m_title" value="${esc(s.title)}"></div>
       <div class="form-group"><label>编号</label><input id="m_number" value="${esc(s.number)}"></div>
+      <div class="form-group"><label>上传人</label><input id="m_uploader" value="${esc(s.uploader || "")}" placeholder="用于对接"></div>
       <div class="form-group"><label>状态</label><select id="m_status">${Object.entries(STATUS_LABELS).filter(([k]) => k !== "merged").map(([k, v]) => `<option value="${k}" ${s.status === k ? "selected" : ""}>${v}</option>`).join("")}</select></div>
       <div class="form-group full"><label>首句</label><input id="m_first" value="${esc(s.firstLine)}"></div>
       <div class="form-group"><label>作者（作词）</label><input id="m_lyricist" value="${esc(s.lyricist)}"></div>
@@ -996,6 +1006,7 @@ async function saveSongModal() {
     lyrics: $("#m_lyrics").value, rating: Number($("#m_rating").value || 0),
     themes: chipSelectValue("m_theme"), scenarios: chipSelectValue("m_scenario"), musicTypes: chipSelectValue("m_type"),
     category: $("#m_category")?.value || "", subcategory: $("#m_subcategory")?.value || "",
+    uploader: $("#m_uploader")?.value || "",
     reclassify: true,
   };
   const d = await api("/api/songs/" + editingId, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
