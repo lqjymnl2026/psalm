@@ -64,7 +64,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans G
       <button class="btn" id="dlSvg">SVG</button>
       <button class="btn" id="dlPdf">🖨 PDF</button>
     </span>
-    <span class="hint" style="margin-left:auto"><b>快捷键：</b>1-7 音高 · 0 休止 · Tab 切时值 · . 附点 · ' 高八度 · , 低八度 · Delete 删选中/上一个</span>
+    <span class="tb-group"><b style="font-size:12px">节奏型</b>
+      <button class="btn" data-ry="0">四分</button>
+      <button class="btn" data-ry="1">八分</button>
+      <button class="btn" data-ry="2">前八后十六</button>
+      <button class="btn" data-ry="3">前十六后八</button>
+      <button class="btn" data-ry="4">附点</button>
+      <button class="btn" data-ry="5">三连音</button>
+      <button class="btn" data-ry="6">小切分</button>
+      <button class="btn" data-ry="7">二+四</button>
+    </span>
+    <span class="hint" style="margin-left:auto"><b>操作：</b>选中音符后按 Q/W/E/R/T/Y 改时值、空格 附点、滚轮 八度；⌥+1~8 插入节奏型</span>
   </div>
 
   <div class="card">
@@ -93,9 +103,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans G
 <script>
 const $ = (s) => document.querySelector(s);
 const DUR_LABEL = { 4: "---", 2: "-", 1: "", 0.5: "_", 0.25: "__" };
-const state = { dur: 1, dot: false, tie: false, rest: false, oct: 0, notes: [], sel: -1, meter: [4, 4], pos: 0 };
+const state = { dur: 1, dot: false, tie: false, rest: false, oct: 0, notes: [], sel: -1, meter: [4, 4], pos: 0, lastPitch: 5, selSet: new Set() };
 
 function addNote(pitch, dur, dot, oct, tie, type) {
+  if (type !== "r") state.lastPitch = pitch;
   const n = { pitch, dur, dot, oct, tie, type: type || "n" };
   state.notes.splice(Math.min(state.pos, state.notes.length), 0, n);
   state.pos = Math.min(state.pos + 1, state.notes.length);
@@ -202,9 +213,9 @@ function render() {
       }
       const nx = x, ny = ry + L.H;
       if (n.type === "r") {
-        svg += `<text x="${nx}" y="${ny}" font-size="18" text-anchor="middle" fill="#333">0</text>`;
+        svg += `<text x="${nx}" y="${ny}" font-size="18" text-anchor="middle" fill="${state.selSet.has(gi) ? "#c9a227" : "#333"}">0</text>`;
       } else {
-        svg += `<text x="${nx}" y="${ny}" font-size="24" font-family="Georgia,serif" text-anchor="middle" data-i="${gi}">${n.pitch}</text>`;
+        svg += `<text x="${nx}" y="${ny}" font-size="24" font-family="Georgia,serif" text-anchor="middle" data-i="${gi}" fill="${state.selSet.has(gi) ? "#c9a227" : "#000"}">${n.pitch}</text>`;
         for (let k = 0; k < Math.abs(n.oct); k++) {
           const cy = n.oct > 0 ? ny - 20 - k * 6 : ny + 8 + k * 6;
           svg += `<circle cx="${nx}" cy="${cy}" r="2"/>`;
@@ -241,49 +252,60 @@ function render() {
   $("#txt").value = toText();
 }
 
-// 键盘输入：1-7 音高 + 26 键快捷（时值/记号/编辑）
+// 键盘输入：按用户方案（Q全 W二 E四 R八 T十六 Y三十二；空格=附点；选中音符后按键=批量改时值）
+function applyToSelection(fn) {
+  if (state.selSet.size) { for (const i of state.selSet) { const n = state.notes[i]; if (n) fn(n); } return true; }
+  return false;
+}
 document.addEventListener("keydown", (e) => {
   if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
   const k = e.key.toLowerCase();
+  // ⌥+数字 = 插入节奏型
+  if (e.altKey && /^[1-8]$/.test(k)) {
+    insertRhythm(Number(k) - 1); e.preventDefault(); return;
+  }
   if (/^[1-7]$/.test(k)) {
-    if (state.rest) { state.rest = false; }
     addNote(Number(k), state.dur, state.dot, state.oct, state.tie, "n");
     state.dot = false; e.preventDefault();
   } else if (k === "0") { addNote(0, state.dur, false, 0, false, "r"); e.preventDefault(); }
-  else if (k === "q") { state.dur = 1; updateDurUI(); e.preventDefault(); }
-  else if (k === "e") { state.dur = 0.5; updateDurUI(); e.preventDefault(); }
-  else if (k === "s") { state.dur = 0.25; updateDurUI(); e.preventDefault(); }
-  else if (k === "w") { state.dur = 4; updateDurUI(); e.preventDefault(); }
-  else if (k === "h") { state.dur = 2; updateDurUI(); e.preventDefault(); }
-  else if (k === "x") { state.dur = 0.125; updateDurUI(); e.preventDefault(); }
-  else if (k === "d") { state.dot = !state.dot; $("#tbDot").classList.toggle("on", state.dot); e.preventDefault(); }
-  else if (k === "t") { state.tie = !state.tie; $("#tbTie").classList.toggle("on", state.tie); e.preventDefault(); }
-  else if (k === "r") { addNote(0, state.dur, false, 0, false, "r"); e.preventDefault(); }
-  else if (k === "u") { state.oct = 1; $("#tbOctU").classList.add("on"); $("#tbOctD").classList.remove("on"); e.preventDefault(); }
-  else if (k === "l") { state.oct = -1; $("#tbOctD").classList.add("on"); $("#tbOctU").classList.remove("on"); e.preventDefault(); }
-  else if (k === "a") { state.pos = Math.max(0, state.pos - 1); render(); e.preventDefault(); }
-  else if (k === "f") { state.pos = Math.min(state.notes.length, state.pos + 1); render(); e.preventDefault(); }
+  else if (k === "q") { if (!applyToSelection(n => n.dur = 4)) state.dur = 4; render(); e.preventDefault(); }
+  else if (k === "w") { if (!applyToSelection(n => n.dur = 2)) state.dur = 2; render(); e.preventDefault(); }
+  else if (k === "e") { if (!applyToSelection(n => n.dur = 1)) state.dur = 1; render(); e.preventDefault(); }
+  else if (k === "r") { if (!applyToSelection(n => n.dur = 0.5)) state.dur = 0.5; render(); e.preventDefault(); }
+  else if (k === "t") { if (!applyToSelection(n => n.dur = 0.25)) state.dur = 0.25; render(); e.preventDefault(); }
+  else if (k === "y") { if (!applyToSelection(n => n.dur = 0.125)) state.dur = 0.125; render(); e.preventDefault(); }
+  else if (k === " ") { if (!applyToSelection(n => n.dot = !n.dot)) state.dot = !state.dot; render(); e.preventDefault(); }
   else if (k === "z") { if (state.notes.length) { state.notes.splice(state.pos > 0 ? state.pos - 1 : 0, 1); if (state.pos > 0) state.pos--; render(); } e.preventDefault(); }
   else if (k === "p") { play(); e.preventDefault(); }
   else if (k === "o") { transpose(1); e.preventDefault(); }
   else if (k === "i") { transpose(-1); e.preventDefault(); }
-  else if (k === ".") { state.dot = !state.dot; $("#tbDot").classList.toggle("on", state.dot); e.preventDefault(); }
-  else if (k === "'") { state.oct = 1; $("#tbOctU").classList.add("on"); $("#tbOctD").classList.remove("on"); e.preventDefault(); }
-  else if (k === ",") { state.oct = -1; $("#tbOctD").classList.add("on"); $("#tbOctU").classList.remove("on"); e.preventDefault(); }
-  else if (k === " ") { state.pos = Math.min(state.notes.length, state.pos + 1); render(); e.preventDefault(); }
+  else if (k === "a") { state.pos = Math.max(0, state.pos - 1); render(); e.preventDefault(); }
+  else if (k === "f") { state.pos = Math.min(state.notes.length, state.pos + 1); render(); e.preventDefault(); }
   else if (k === "backspace") { if (state.notes.length) { state.notes.splice(state.pos > 0 ? state.pos - 1 : 0, 1); if (state.pos > 0) state.pos--; render(); } e.preventDefault(); }
   else if (k === "delete") { if (state.notes.length && state.pos < state.notes.length) { state.notes.splice(state.pos, 1); render(); } e.preventDefault(); }
-  else if (k === "tab") {
-    const durs = [1, 0.5, 0.25, 2, 4];
-    state.dur = durs[(durs.indexOf(state.dur) + 1) % durs.length];
-    updateDurUI(); e.preventDefault();
-  }
+  else if (k === "tab") { const durs = [1, 0.5, 0.25, 2, 4]; state.dur = durs[(durs.indexOf(state.dur) + 1) % durs.length]; render(); e.preventDefault(); }
 });
 
-function transpose(delta) {
-  state.notes.forEach(n => { if (n.type === "n") { let p = n.pitch + delta; if (p > 7) p -= 7; if (p < 1) p += 7; n.pitch = p; } });
+// 节奏型（一拍=1）：插入一组音符（音高=最近输入的音高，可再改）
+const RHYTHMS = [
+  { name: "四分均匀", durs: [1, 1, 1, 1] },
+  { name: "八分均匀", durs: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5] },
+  { name: "前八后十六", durs: [0.5, 0.25, 0.25] },
+  { name: "前十六后八", durs: [0.25, 0.25, 0.5] },
+  { name: "附点节奏", durs: [1.5, 0.5] },
+  { name: "三连音(近似)", durs: [0.25, 0.25, 0.25] },
+  { name: "小切分", durs: [0.5, 1, 0.5] },
+  { name: "二分+四分", durs: [2, 1, 1] },
+];
+function insertRhythm(idx) {
+  const r = RHYTHMS[idx]; if (!r) return;
+  const p = state.lastPitch || 1;
+  const arr = r.durs.map(dur => ({ pitch: p, dur, dot: false, oct: state.oct, tie: false, type: "n" }));
+  state.notes.splice(state.pos, 0, ...arr);
+  state.pos += arr.length;
   render();
 }
+
 function updateDurUI() {
   document.querySelectorAll("[data-dur]").forEach(b => b.classList.toggle("on", Number(b.dataset.dur) === state.dur));
 }
@@ -303,19 +325,46 @@ $("#mAuthor").addEventListener("input", render);
 $("#mComposer").addEventListener("input", render);
 $("#fromTxt").addEventListener("click", () => fromText($("#txt").value));
 
-// 鼠标：点击谱面选择音符、右键删除
+// 鼠标：点击选（Shift/Cmd 加选/反选），右键删选中，滚轮调八度
 $("#score").addEventListener("click", (e) => {
   const t = e.target;
-  if (t.tagName === "text" && t.dataset.i !== undefined) { state.sel = Number(t.dataset.i); }
+  if (t.tagName === "text" && t.dataset.i !== undefined) {
+    const i = Number(t.dataset.i);
+    if (e.shiftKey || e.metaKey) {
+      if (state.selSet.has(i)) state.selSet.delete(i); else state.selSet.add(i);
+    } else {
+      state.selSet.clear(); state.selSet.add(i);
+    }
+    state.sel = i;
+    render();
+  } else if (t.tagName === "svg") {
+    state.selSet.clear(); render();
+  }
 });
 $("#score").addEventListener("contextmenu", (e) => {
   e.preventDefault();
   const t = e.target;
-  if (t.tagName === "text" && t.dataset.i !== undefined) {
+  if (state.selSet.size) {
+    const arr = [...state.selSet].sort((a, b) => b - a);
+    arr.forEach(i => state.notes.splice(i, 1));
+    state.selSet.clear();
+    render();
+  } else if (t.tagName === "text" && t.dataset.i !== undefined) {
     state.notes.splice(Number(t.dataset.i), 1);
     render();
   }
 });
+$("#score").addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const t = e.target;
+  let targets = state.selSet.size ? [...state.selSet] : (t.tagName === "text" && t.dataset.i !== undefined ? [Number(t.dataset.i)] : []);
+  if (!targets.length) return;
+  const dir = e.deltaY < 0 ? 1 : -1; // 上滚=高八度
+  targets.forEach(i => { const n = state.notes[i]; if (n && n.type === "n") n.oct += dir; });
+  render();
+});
+
+document.querySelectorAll("[data-ry]").forEach(b => b.addEventListener("click", () => insertRhythm(Number(b.dataset.ry))));
 
 // MIDI 试听
 let ac = null;
