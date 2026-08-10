@@ -679,10 +679,48 @@ def parse_toc_shou(text, source=""):
         rest = re.sub(r"\d{1,3}\s*首.*$", "", rest)
         rest = re.sub(r"\d{1,3}\s*$", "", rest)
         title = rest.strip(" ””\"'、，,；;:：…·.。 	")
-        if 2 <= len(title) <= 30 and not re.fullmatch(r"[\d\s…·.。\-]+", title):
-            if num not in entries or len(title) > len(entries[num]):
-                entries[num] = title
+        if re.fullmatch(r"[\d\s…·.。\-]+", title):
+            title = ""
+        if num not in entries or len(title) > len(entries[num]):
+            entries[num] = title
     return [{"number": n, "title": t, "page": ""} for n, t in entries.items()]
+
+
+def ocr_toc_page_rows(path):
+    """目录页全量识别：整页 + 左右区域放大分别识别，合并所有行。"""
+    from PIL import Image, ImageOps
+    rows_all = []
+    # 整页（三通道最优的 words）
+    text, full = ocr_image_tesseractjs_full(path)
+    words = (full or {}).get("words") or []
+    if words:
+        rows_all.extend(reconstruct_rows(words))
+    # 左右区域放大 2.2x，各识别一次
+    try:
+        im = Image.open(path).convert("L")
+        im = ImageOps.exif_transpose(im)
+        w, h = im.size
+        half = w // 2
+        for rg in (im.crop((0, 0, half, h)), im.crop((half, 0, w, h))):
+            rg = rg.resize((int(rg.width * 2.2), int(rg.height * 2.2)), Image.LANCZOS)
+            pre = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+            pre.close()
+            rg.save(pre.name)
+            d = _run_tessjs_direct_words(pre.name, "4")
+            try: os.unlink(pre.name)
+            except OSError: pass
+            if d and d.get("words"):
+                rows_all.extend(reconstruct_rows(d["words"]))
+    except Exception:
+        pass
+    # 去重行（按 (y, x) 近似；简单按文本去重）
+    seen, uniq = set(), []
+    for r in rows_all:
+        key = r.strip()
+        if key and key not in seen:
+            seen.add(key)
+            uniq.append(r)
+    return uniq
 
 
 def parse_ocr_text_multi(text, source=""):
@@ -1005,7 +1043,7 @@ def parse_image_file(path, filename, settings=None):
                       "lyrics": ai.get("lyrics", ""), "source": filename}]
         else:
             songs = []
-            # ① 目录识别：优先“N首+歌名”格式，其次通用格式；≥3 条判为目录
+            # ① 目录识别：整页+左右区域放大全量识别，按首数去重全部保留
             words = (lines or {}).get("words") if isinstance(lines, dict) else None
             rows = reconstruct_rows(words) if words else []
             rowtext = "\n".join(rows) if rows else text
@@ -1013,6 +1051,18 @@ def parse_image_file(path, filename, settings=None):
             if len(toc) < 3:
                 toc = parse_toc_entries(rowtext, filename)
             if len(toc) >= 3:
+                # 全量：左右区域放大再识别，合并
+                try:
+                    rows2 = ocr_toc_page_rows(path)
+                    toc2 = parse_toc_shou("\n".join(rows2), filename)
+                    merged = {}
+                    for e in list(toc) + list(toc2):
+                        n = e["number"]
+                        if n not in merged or len(e["title"]) > len(merged[n]["title"]):
+                            merged[n] = e
+                    toc = list(merged.values())
+                except Exception:
+                    pass
                 songs = [{"title": e["title"], "number": e["number"],
                           "comment": ("页码 " + e["page"]) if e.get("page") else "来自目录",
                           "lyrics": "", "source": filename,
