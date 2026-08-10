@@ -1,13 +1,5 @@
-/* 赞美诗中心：不再使用离线缓存（本地服务不需要）。
-   本文件只负责：清理旧缓存 → 注销自身 → 刷新所有打开的页面，彻底解决旧代码被缓存的问题。 */
+/* 赞美诗中心 Service Worker —— 仅用于满足 PWA 可安装条件（安卓 Chrome「安装应用」）。
+   不缓存、不拦截任何请求，彻底避免旧代码被缓存的问题。 */
 self.addEventListener("install", () => self.skipWaiting());
-self.addEventListener("activate", (e) => {
-  e.waitUntil(
-    caches.keys()
-      .then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
-      .then(() => self.registration.unregister())
-      .then(() => self.clients.matchAll({ type: "window" }))
-      .then((cls) => cls.forEach((c) => c.navigate(c.url)))
-  );
-});
-// 不再拦截任何网络请求
+self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
+self.addEventListener("fetch", () => { /* 不拦截、不缓存 */ });

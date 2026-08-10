@@ -1219,9 +1219,9 @@ function bindGlobal() {
 
 (async function init() {
   bindGlobal();
-  // 注销所有 Service Worker：本地服务不需要离线缓存，避免旧代码被缓存导致功能失效
-  if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.getRegistrations().then((rs) => rs.forEach((r) => r.unregister())).catch(() => {});
+  // 注册零缓存 Service Worker（仅满足 PWA 可安装条件，不缓存任何内容）
+  if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
+    navigator.serviceWorker.register("/static/sw.js").catch(() => {});
   }
   state.token = localStorage.getItem("hymn_token") || "";
   try {
