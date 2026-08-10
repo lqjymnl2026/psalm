@@ -792,6 +792,53 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if _admin_enabled() and not _is_public(path, "POST") and not _check_auth(self.headers):
                 return self._json({"ok": False, "msg": "需要登录"}, 401)
+            if path == "/api/import/rows":
+                body = self._json_body()
+                rows = body.get("rows") or []
+                uploader_default = (body.get("uploader") or "").strip()
+                created = []
+                batch = f"B{store.next_seq():04d}"
+                for raw in rows:
+                    if not (raw.get("title") or raw.get("lyrics") or raw.get("firstLine")):
+                        continue
+                    s = default_song(**{k: raw.get(k) for k in (
+                        "title", "firstLine", "lyricist", "composer", "translator", "tune",
+                        "key", "meter", "source", "comment", "lyrics", "number")})
+                    s["id"] = f"S{store.next_seq():05d}"
+                    s["uploader"] = ((raw.get("uploader") or "").strip() or uploader_default)
+                    explicit_cat = (raw.get("category") or "").strip()
+                    explicit_sub = (raw.get("subcategory") or "").strip()
+                    classify_song(s)
+                    if explicit_cat:
+                        s["category"] = explicit_cat
+                    if explicit_sub:
+                        s["subcategory"] = explicit_sub
+                    s["importBatch"] = batch
+                    s["importSource"] = "表格批量导入"
+                    song_flags(s)
+                    created.append(s)
+                store.songs().extend(created)
+                apply_dedup(store)
+                for s in created:
+                    song_flags(s)
+                store.save()
+                summary = {"batch": batch, "total": len(created), "ok": 0, "needsReview": 0,
+                           "duplicates": 0, "incomplete": 0}
+                for s in created:
+                    if s.get("needsReview"):
+                        summary["needsReview"] += 1
+                    if s.get("dupGroup"):
+                        summary["duplicates"] += 1
+                    if not s.get("title") or not s.get("lyrics"):
+                        summary["incomplete"] += 1
+                    if not s.get("needsReview") and not s.get("dupGroup") and s.get("title") and s.get("lyrics"):
+                        summary["ok"] += 1
+                imp = {"batch": batch, "time": now_str(), "files": ["表格批量导入"], "total": len(created),
+                       "ok": summary["ok"], "needsReview": summary["needsReview"],
+                       "duplicates": summary["duplicates"], "incomplete": summary["incomplete"]}
+                store.data["imports"].insert(0, imp)
+                store.save()
+                return self._json({"ok": True, "summary": summary})
             if path == "/api/login":
                 body = self._json_body()
                 if _check_password(body.get("password", "")):

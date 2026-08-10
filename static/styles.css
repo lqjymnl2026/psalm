@@ -337,3 +337,7 @@ table.grid-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 }
 
 .vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* 表格批量导入 */
+.tbl-inp { width: 100%; min-width: 64px; border: 1px solid var(--line); border-radius: 6px; padding: 5px 6px; font-size: 12px; outline: none; background: #fff; }
+.tbl-inp:focus { border-color: var(--primary); }

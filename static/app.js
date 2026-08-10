@@ -181,6 +181,18 @@ async function renderDashboard() {
     <div class="stats-grid">${cards.map((c) => `
       <div class="stat-card ${c.c}"><div class="num">${c.n}</div><div class="label">${c.label}</div><div class="foot">${c.foot}</div></div>`).join("")}
     </div>
+    <div class="card card-pad section" style="border-color:#bcd8c6;background:#f6fbf8">
+      <div class="card-title">📥 批量导入 <span class="sub">Excel / CSV / PDF / Word / 图片 / 音频 · 可多选 · 自动识别并分类</span></div>
+      <div class="flex flex-wrap">
+        <label class="btn btn-primary" for="dashFileInput" style="padding:12px 26px;font-size:15px">📂 选择文件批量导入</label>
+        <span class="muted small">或到「曲目收集」页拖拽多个文件；支持导入模板下载</span>
+      </div>
+      <input type="file" id="dashFileInput" multiple class="vh"
+        accept=".xlsx,.xlsm,.xls,.csv,.pdf,.docx,.doc,.jpg,.jpeg,.png,.bmp,.webp,.gif,.tif,.tiff,.mp3,.wav,.m4a,.aac,.flac,.ogg">
+      <div id="importProgress" class="mt12" hidden><span class="spin"></span>正在导入并智能整理，请稍候…</div>
+      <div id="importResult" class="mt12"></div>
+    </div>
+
     <div class="grid-3-2 section">
       ${d.categories && d.categories.hymnbook ? `
       <div class="card card-pad">
@@ -222,6 +234,8 @@ async function renderDashboard() {
         <button class="btn btn-gold" data-goto="export">📤 导出中心</button>
       </div>
     </div>`;
+  const dfi = $("#dashFileInput");
+  if (dfi) dfi.addEventListener("change", () => { if (dfi.files.length) uploadFiles(dfi.files); dfi.value = ""; });
   bindGoto();
 }
 
@@ -291,6 +305,34 @@ async function renderCollection() {
     </div>
 
     <div class="card card-pad section">
+      <div class="card-title">📋 表格批量导入 <span class="sub">直接录入或从 Excel 复制粘贴，一次导入多首</span></div>
+      <div class="fg mb8">
+        <label class="small">从 Excel 选中若干行复制（Ctrl/Cmd+C）后粘贴到下面，点「填充到表格」：</label>
+        <textarea id="pasteArea" rows="2" placeholder="例：张三&#9;奇异恩典&#9;奇异恩典，何等甘甜&#9;奇异恩典，何等甘甜，我罪已得赦免；…&#9;John Newton&#9;NEW BRITAIN&#9;老诗集&#9;&#9;" style="font-size:12px"></textarea>
+        <div class="mt8 flex flex-wrap">
+          <button class="btn btn-sm btn-primary" id="pasteFill">⬇ 填充到表格</button>
+          <button class="btn btn-sm" id="tblAddRow">＋ 添加一行</button>
+          <button class="btn btn-sm btn-ghost" id="tblClear">清空</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="grid-table" id="tbl">
+          <thead><tr>
+            <th style="min-width:70px">上传人</th><th style="min-width:110px">歌名 *</th><th style="min-width:140px">首句</th>
+            <th style="min-width:220px">歌词</th><th style="min-width:90px">作者</th><th style="min-width:90px">作曲/曲调</th>
+            <th style="min-width:90px">来源</th><th style="min-width:80px">大类</th><th style="min-width:80px">细类</th><th style="width:40px"></th>
+          </tr></thead>
+          <tbody id="tblBody"></tbody>
+        </table>
+      </div>
+      <div class="mt12 flex flex-wrap">
+        <button class="btn btn-gold" id="tblImport">⚡ 批量导入（0 首）</button>
+        <span class="muted small">列顺序：上传人 / 歌名 / 首句 / 歌词 / 作者 / 作曲曲调 / 来源 / 大类 / 细类（大类细类留空自动分类）</span>
+      </div>
+      <div id="tblResult" class="mt12"></div>
+    </div>
+
+    <div class="card card-pad section">
       <div class="card-title">＋ 手工新增曲目
         <button class="btn btn-gold btn-sm" id="btnMobileCollect" style="margin-left:auto">📱 快捷收集页</button>
         <button class="btn btn-primary btn-sm" id="btnOcrFill">📷 拍照识别填表</button>
@@ -344,6 +386,78 @@ async function renderCollection() {
 
   $("#btnMobileCollect").addEventListener("click", () => { location.href = "/mobile"; });
   // 拍照/相册改为 <label for> 原生触发
+  // ---- 表格批量导入 ----
+  function tblRow(data = {}) {
+    const tr = document.createElement("tr");
+    ["uploader", "title", "firstLine", "lyrics", "lyricist", "composer", "source", "category", "subcategory"].forEach((f) => {
+      const td = document.createElement("td");
+      const inp = document.createElement("input");
+      inp.className = "tbl-inp";
+      inp.dataset.field = f;
+      inp.value = data[f] || "";
+      inp.addEventListener("input", updateTblCount);
+      td.appendChild(inp);
+      tr.appendChild(td);
+    });
+    const td = document.createElement("td");
+    const del = document.createElement("button");
+    del.className = "btn btn-sm btn-danger";
+    del.textContent = "删";
+    del.addEventListener("click", () => { tr.remove(); updateTblCount(); });
+    td.appendChild(del);
+    tr.appendChild(td);
+    return tr;
+  }
+  function updateTblCount() {
+    const rows = Array.from($$("#tblBody tr")).filter((tr) => (tr.querySelector('[data-field="title"]') || {}).value);
+    const btn = $("#tblImport");
+    if (btn) btn.textContent = `⚡ 批量导入（${rows.length} 首）`;
+  }
+  const tbody = $("#tblBody");
+  tbody.appendChild(tblRow());
+  $("#tblAddRow").addEventListener("click", () => { tbody.appendChild(tblRow()); });
+  $("#tblClear").addEventListener("click", () => { tbody.innerHTML = ""; tbody.appendChild(tblRow()); updateTblCount(); });
+  $("#pasteFill").addEventListener("click", () => {
+    const text = $("#pasteArea").value;
+    const lines = text.split(/\n/).map((l) => l.replace(/\r$/, "")).filter((l) => l.trim());
+    if (!lines.length) return toast("请先粘贴 Excel 内容", "warn");
+    tbody.innerHTML = "";
+    lines.forEach((line) => {
+      const cells = line.split(/\t/).map((c) => c.trim());
+      const data = { uploader: cells[0] || "", title: cells[1] || "", firstLine: cells[2] || "", lyrics: cells[3] || "",
+                     lyricist: cells[4] || "", composer: cells[5] || "", source: cells[6] || "",
+                     category: cells[7] || "", subcategory: cells[8] || "" };
+      tbody.appendChild(tblRow(data));
+    });
+    if (!tbody.children.length) tbody.appendChild(tblRow());
+    updateTblCount();
+    toast(`已填入 ${lines.length} 行，请核对后点批量导入`);
+  });
+  $("#tblImport").addEventListener("click", async () => {
+    const rows = [];
+    $$("#tblBody tr").forEach((tr) => {
+      const get = (f) => ((tr.querySelector(`[data-field="${f}"]`) || {}).value || "").trim();
+      rows.push({ uploader: get("uploader"), title: get("title"), firstLine: get("firstLine"), lyrics: get("lyrics"),
+                  lyricist: get("lyricist"), composer: get("composer"), source: get("source"),
+                  category: get("category"), subcategory: get("subcategory") });
+    });
+    const valid = rows.filter((r) => r.title || r.lyrics);
+    if (!valid.length) return toast("请至少填写一行歌名", "warn");
+    const btn = $("#tblImport"); btn.disabled = true;
+    try {
+      const d = await api("/api/import/rows", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows: valid }) });
+      const s = d.summary;
+      $("#tblResult").innerHTML = `
+        <div class="card card-pad" style="background:#f0faf4;border-color:#bcd8c6">
+          ✅ 表格导入完成：${s.total} 首（识别成功 ${s.ok} · 待确认 ${s.needsReview} · 重复 ${s.duplicates} · 不完整 ${s.incomplete}）</div>`;
+      toast(`已导入 ${s.total} 首`);
+      $("#pasteArea").value = "";
+      tbody.innerHTML = ""; tbody.appendChild(tblRow()); updateTblCount();
+      refreshStats();
+    } catch (e) { toast("导入失败：" + e.message, "err"); }
+    btn.disabled = false;
+  });
+  updateTblCount();
   $("#btnOcrFill").addEventListener("click", () => $("#cameraInput").click());
   $("#ocrDiscard").addEventListener("click", () => {
     state.pendingPhoto = null;
@@ -453,6 +567,7 @@ async function uploadFiles(files) {
       </div>`;
     bindGoto();
     refreshStats();
+    if (state.page === "library") loadLibrary();
   } catch (e) {
     toast("导入失败：" + e.message, "err");
     $("#importResult").innerHTML = `<div class="card card-pad muted">导入失败：${esc(e.message)}</div>`;
@@ -653,6 +768,8 @@ async function loadLibrary() {
         <button class="btn btn-sm btn-danger" id="bulkReject">淘汰</button>
         <button class="btn btn-sm btn-danger" id="bulkDelete">删除</button>
         <button class="btn btn-sm" id="bulkExport">📤 导出选中 <span id="selCount">(${state.selected.size})</span></button>
+        <label class="btn btn-sm btn-primary" for="libFileInput">📥 批量导入</label>
+        <input type="file" id="libFileInput" multiple class="vh" accept=".xlsx,.xlsm,.xls,.csv,.pdf,.docx,.doc,.jpg,.jpeg,.png,.bmp,.webp,.gif,.tif,.tiff,.mp3,.wav,.m4a,.aac,.flac,.ogg">
         <span class="muted small">共 ${d.total} 首</span>
       </div>
       <div class="table-wrap">
@@ -680,6 +797,8 @@ async function loadLibrary() {
         </tbody>
       </table>
       </div>
+      <div id="importProgress" class="mt12" hidden style="padding:0 12px"><span class="spin"></span>正在导入并智能整理，请稍候…</div>
+      <div id="importResult" class="mt12" style="padding:0 12px"></div>
       <div class="pager">
         <span>第 ${p} / ${pages} 页 · 共 ${d.total} 首</span>
         <div class="pages">
@@ -693,6 +812,8 @@ async function loadLibrary() {
 }
 
 function bindLibrary(d) {
+  const lfi = $("#libFileInput");
+  if (lfi) lfi.addEventListener("change", () => { if (lfi.files.length) uploadFiles(lfi.files); lfi.value = ""; });
   const apply = () => { state.lib.q = $("#libSearch").value; state.lib.page = 1; loadLibrary(); };
   $("#libApply").addEventListener("click", apply);
   $("#libSearch").addEventListener("keydown", (e) => { if (e.key === "Enter") apply(); });
