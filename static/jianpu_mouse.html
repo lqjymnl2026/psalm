@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>简谱快速打谱 · 鼠标排版</title>
+<title>简谱快速打谱 · 赞美诗中心</title>
 <style>
 :root{--ink:#1c2740;--ink2:#5b6b85;--primary:#4b6eaf;--gold:#c9a227;--line:#e3e8f0;--bg:#f2f5fa}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -11,96 +11,112 @@ body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans G
 .top{background:linear-gradient(135deg,#1e2942,#3a5791);color:#fff;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
 .top h1{font-size:17px}
 .top a{color:#ffd970;text-decoration:none;font-size:13px;background:rgba(255,255,255,.12);padding:5px 12px;border-radius:8px}
-.wrap{max-width:1240px;margin:0 auto;padding:14px}
-.toolbar{background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px 12px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:12px}
-.btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 11px;font-size:13px;cursor:pointer}
+.wrap{max-width:1400px;margin:0 auto;padding:14px;display:grid;grid-template-columns:360px 1fr;gap:14px;align-items:start}
+@media(max-width:980px){.wrap{grid-template-columns:1fr}}
+.left{display:flex;flex-direction:column;gap:12px}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px}
+.card h2{font-size:13px;margin-bottom:8px;color:var(--ink2);font-weight:600}
+.btn{border:1px solid var(--line);background:#fff;border-radius:7px;padding:5px 9px;font-size:12px;cursor:pointer}
 .btn.on{background:var(--primary);color:#fff;border-color:var(--primary)}
 .btn-gold{background:var(--gold);color:#fff;border-color:var(--gold)}
 .btn-green{background:#2e9e6b;color:#fff;border-color:#2e9e6b}
 .btn:hover{opacity:.9}
-.tb-group{display:flex;gap:4px;align-items:center;border-right:1px solid var(--line);padding-right:10px;margin-right:2px}
-.tb-group:last-child{border-right:none}
-.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px}
-#score{overflow:auto;min-height:380px}
+.tb{display:flex;flex-direction:column;gap:8px}
+.tb-row{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+.tb-row .lb{font-size:11px;color:var(--ink2);margin-right:2px;min-width:34px}
+textarea{border:1px solid var(--line);border-radius:8px;padding:8px;font-size:12px;font-family:ui-monospace,Menlo,monospace;min-height:60px;width:100%;outline:none;resize:vertical}
+.meta{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.meta input{border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:12px;outline:none;width:100%}
+#score{overflow:auto;max-height:calc(100vh - 130px);min-height:70vh;background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px}
 #score svg{max-width:100%}
-.hint{font-size:12px;color:var(--ink2);line-height:1.9}
+.hint{font-size:11px;color:var(--ink2);line-height:1.8}
 .hint b{color:var(--primary)}
-.meta{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px}
-.meta input{border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:12px;outline:none}
-.lyrics textarea{border:1px solid var(--line);border-radius:6px;padding:6px;font-size:12px;width:100%;min-height:40px;resize:vertical;outline:none}
-.sync{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
-.sync textarea{border:1px solid var(--line);border-radius:6px;padding:8px;font-size:12px;font-family:ui-monospace,Menlo,monospace;min-height:80px;width:100%;outline:none}
+details.card summary{cursor:pointer;font-size:12px;color:var(--ink2);font-weight:600}
+.mt8{margin-top:8px}
 </style>
 </head>
 <body>
 <div class="top">
-  <h1>🎼 简谱快速打谱（鼠标 + 数字键）</h1>
-  <a href="/jianpu">← 文本编辑器</a>
-  <a href="/#/collection">返回后台</a>
+  <h1>🎼 简谱快速打谱（鼠标 + 键盘）</h1>
+  <span>
+    <a href="/jianpu">📝 文本编辑器</a>
+    <a href="/#/collection">返回后台</a>
+  </span>
 </div>
 <div class="wrap">
-  <div class="toolbar" id="tb">
-    <span class="tb-group"><b style="font-size:12px">时值</b>
-      <button class="btn" data-dur="4" title="全音符(---)">𝅝 全</button>
-      <button class="btn" data-dur="2" title="二分音符(-)">𝅗𝅥 二</button>
-      <button class="btn on" data-dur="1" title="四分音符">♩ 四</button>
-      <button class="btn" data-dur="0.5" title="八分音符(_)">♪ 八</button>
-      <button class="btn" data-dur="0.25" title="十六分音符(__)">♬ 十六</button>
-    </span>
-    <span class="tb-group"><b style="font-size:12px">记号</b>
-      <button class="btn" id="tbDot" title="附点(.)">附点</button>
-      <button class="btn" id="tbTie" title="连音线(~)">连音</button>
-      <button class="btn" id="tbRest" title="休止(0)">休止</button>
-      <button class="btn" id="tbOctU" title="高八度(')">+8</button>
-      <button class="btn" id="tbOctD" title="低八度(,)">-8</button>
-    </span>
-    <span class="tb-group">
-      <button class="btn" id="undo">↩ 撤销</button>
-      <button class="btn" id="clear">清空</button>
-      <button class="btn btn-green" id="play">🔊 试听</button>
-    </span>
-    <span class="tb-group">
-      <button class="btn" id="dlPng">PNG</button>
-      <button class="btn" id="dlSvg">SVG</button>
-      <button class="btn" id="dlPdf">🖨 PDF</button>
-    </span>
-    <span class="tb-group"><b style="font-size:12px">节奏型</b>
-      <button class="btn" data-ry="0">四分</button>
-      <button class="btn" data-ry="1">八分</button>
-      <button class="btn" data-ry="2">前八后十六</button>
-      <button class="btn" data-ry="3">前十六后八</button>
-      <button class="btn" data-ry="4">附点</button>
-      <button class="btn" data-ry="5">三连音</button>
-      <button class="btn" data-ry="6">小切分</button>
-      <button class="btn" data-ry="7">二+四</button>
-    </span>
-    <span class="hint" style="margin-left:auto"><b>操作：</b>选中音符后按 Q/W/E/R/T/Y 改时值、空格 附点、滚轮 八度；⌥+1~8 插入节奏型</span>
-  </div>
-
-  <div class="card">
-    <div class="meta">
-      <input id="mTitle" placeholder="歌名" value="奇异恩典">
-      <input id="mAuthor" placeholder="作词" value="John Newton">
-      <input id="mComposer" placeholder="作曲" value="NEW BRITAIN">
-      <input id="mKey" placeholder="1=F 4/4" value="1=F 4/4">
+  <div class="left">
+    <div class="card">
+      <h2>📋 曲目信息</h2>
+      <div class="meta">
+        <input id="mTitle" placeholder="歌名" value="奇异恩典">
+        <input id="mAuthor" placeholder="作词" value="John Newton">
+        <input id="mComposer" placeholder="作曲" value="NEW BRITAIN">
+        <input id="mKey" placeholder="1=F 4/4" value="1=F 4/4">
+      </div>
     </div>
-    <div id="score"></div>
-    <div class="lyrics mt12">
-      <div class="hint" style="margin-bottom:4px">歌词（每行一段，字符逐个对齐音符）：</div>
+    <div class="card">
+      <h2>⌨ 时值（选中音符后按键 = 批量改）</h2>
+      <div class="tb">
+        <div class="tb-row"><span class="lb">时值</span>
+          <button class="btn on" data-dur="1" title="E 四分">E 四分</button>
+          <button class="btn" data-dur="0.5" title="R 八分">R 八分</button>
+          <button class="btn" data-dur="0.25" title="T 十六">T 十六</button>
+          <button class="btn" data-dur="2" title="W 二分">W 二分</button>
+          <button class="btn" data-dur="4" title="Q 全音符">Q 全</button>
+          <button class="btn" data-dur="0.125" title="Y 三十二">Y 三十二</button>
+        </div>
+        <div class="tb-row"><span class="lb">记号</span>
+          <button class="btn" id="tbDot">空格 附点</button>
+          <button class="btn" id="tbTie">T 连音</button>
+          <button class="btn" id="tbRest">R 休止</button>
+          <button class="btn" id="tbOctU">滚轮↑ 高八</button>
+          <button class="btn" id="tbOctD">滚轮↓ 低八</button>
+        </div>
+        <div class="tb-row"><span class="lb">编辑</span>
+          <button class="btn" id="undo">Z 撤销</button>
+          <button class="btn" id="clear">清空</button>
+          <button class="btn" id="play">P 试听</button>
+          <button class="btn" id="dlPng">PNG</button>
+          <button class="btn" id="dlSvg">SVG</button>
+          <button class="btn" id="dlPdf">🖨 PDF</button>
+        </div>
+      </div>
+      <div class="hint mt8">点选/Shift加选音符 → 按 Q/W/E/R/T/Y 改时值 · 空格 附点 · 滚轮 八度 · 数字1-7 输音高</div>
+    </div>
+    <div class="card">
+      <h2>🎵 节奏型（⌥+1~8 或点按钮）</h2>
+      <div class="tb-row">
+        <button class="btn" data-ry="0">四分</button>
+        <button class="btn" data-ry="1">八分</button>
+        <button class="btn" data-ry="2">前八后十六</button>
+        <button class="btn" data-ry="3">前十六后八</button>
+        <button class="btn" data-ry="4">附点</button>
+        <button class="btn" data-ry="5">三连音</button>
+        <button class="btn" data-ry="6">小切分</button>
+        <button class="btn" data-ry="7">二+四</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>🎤 歌词（每行一段，逐字对齐）</h2>
       <textarea id="lyrics">奇异恩典，何等甘甜
 我罪已得赦免；</textarea>
     </div>
+    <details class="card">
+      <summary>📄 简谱文本（导出/导入）</summary>
+      <div class="mt8">
+        <textarea id="txt" readonly></textarea>
+        <button class="btn mt8" id="fromTxt">⬇ 从文本导入</button>
+      </div>
+    </details>
   </div>
-
-  <div class="sync">
-    <div class="card">
-      <div class="hint" style="margin-bottom:4px">📄 当前简谱文本（可复制到文本编辑器，或粘贴导入）：</div>
-      <textarea id="txt" readonly></textarea>
-      <button class="btn mt8" id="fromTxt">⬇ 从文本导入到打谱</button>
-    </div>
+  <div class="card">
+    <h2>🖼 谱面预览（滚轮 = 八度）</h2>
+    <div id="score"></div>
   </div>
 </div>
+
 <script>
+
 const $ = (s) => document.querySelector(s);
 const DUR_LABEL = { 4: "---", 2: "-", 1: "", 0.5: "_", 0.25: "__" };
 const state = { dur: 1, dot: false, tie: false, rest: false, oct: 0, notes: [], sel: -1, meter: [4, 4], pos: 0, lastPitch: 5, selSet: new Set() };
@@ -409,6 +425,7 @@ $("#dlPdf").addEventListener("click", () => {
 // 示例谱
 fromText("| 5 6 1' 2' | 3' 2' 1' 6 | 5 - 3 5 | 1' - - 0 |");
 render();
+
 </script>
 </body>
 </html>
