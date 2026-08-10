@@ -266,14 +266,14 @@ async function renderCollection() {
       <div class="card-title">批量导入
         <span class="sub">支持 Excel(.xlsx/.csv) · PDF · Word(.docx) · 图片 · 音频，可多选</span>
       </div>
-      <div class="dropzone" id="dropzone">
+      <label class="dropzone" id="dropzone" for="fileInput">
         <div class="dz-icon">📂</div>
         <div class="dz-title">拖拽文件到这里，或点击选择文件</div>
         <div class="dz-sub">Excel 列名自动识别（歌名/歌曲名称/title…）· PDF/Word 自动切分曲目 · 图片/音频进入“待人工确认”</div>
-      </div>
+      </label>
       <div class="mob-upload-btns">
-        <button class="btn btn-primary" id="btnCamera"><span class="bu-ico">📷</span>拍照上传诗歌</button>
-        <button class="btn" id="btnGallery"><span class="bu-ico">🖼️</span>相册 / 文件</button>
+        <label class="btn btn-primary" for="cameraInput"><span class="bu-ico">📷</span>拍照上传诗歌</label>
+        <label class="btn" for="galleryInput"><span class="bu-ico">🖼️</span>相册 / 文件</label>
       </div>
       <input type="file" id="fileInput" multiple class="vh"
         accept=".xlsx,.xlsm,.xls,.csv,.pdf,.docx,.doc,.jpg,.jpeg,.png,.bmp,.webp,.gif,.tif,.tiff,.mp3,.wav,.m4a,.aac,.flac,.ogg">
@@ -334,7 +334,6 @@ async function renderCollection() {
 
   bindChipSelect($("#content"));
   const dz = $("#dropzone"), fi = $("#fileInput");
-  dz.addEventListener("click", () => fi.click());
   dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("drag"); });
   dz.addEventListener("dragleave", () => dz.classList.remove("drag"));
   dz.addEventListener("drop", (e) => {
@@ -344,8 +343,7 @@ async function renderCollection() {
   fi.addEventListener("change", () => { if (fi.files.length) uploadFiles(fi.files); fi.value = ""; });
 
   $("#btnMobileCollect").addEventListener("click", () => { location.href = "/mobile"; });
-  $("#btnCamera").addEventListener("click", () => $("#cameraInput").click());
-  $("#btnGallery").addEventListener("click", () => $("#galleryInput").click());
+  // 拍照/相册改为 <label for> 原生触发
   $("#btnOcrFill").addEventListener("click", () => $("#cameraInput").click());
   $("#ocrDiscard").addEventListener("click", () => {
     state.pendingPhoto = null;
@@ -1100,8 +1098,9 @@ function bindGlobal() {
 
 (async function init() {
   bindGlobal();
-  if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
-    navigator.serviceWorker.register("/static/sw.js").catch(() => {});
+  // 注销所有 Service Worker：本地服务不需要离线缓存，避免旧代码被缓存导致功能失效
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.getRegistrations().then((rs) => rs.forEach((r) => r.unregister())).catch(() => {});
   }
   state.token = localStorage.getItem("hymn_token") || "";
   try {
