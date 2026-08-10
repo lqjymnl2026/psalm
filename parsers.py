@@ -421,7 +421,7 @@ def _find_node_modules():
     return cand if os.path.isdir(cand) else None
 
 
-def _preprocess_image_variant(path, scale_target=2200, contrast=None, binarize=False):
+def _preprocess_image_variant(path, scale_target=2200, contrast=None, binarize=False, sharpen=False):
     """OCR 前预处理：EXIF 转正 + 缩放到指定大小 + 灰度 + 可选对比度/二值化。"""
     try:
         from PIL import Image, ImageOps, ImageEnhance
@@ -441,6 +441,9 @@ def _preprocess_image_variant(path, scale_target=2200, contrast=None, binarize=F
             im = ImageEnhance.Contrast(im).enhance(contrast)
         if binarize:
             im = im.point(lambda x: 0 if x < 175 else 255)
+        if sharpen:
+            from PIL import ImageFilter
+            im = im.filter(ImageFilter.SHARPEN)
         tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
         tmp.close()
         im.save(tmp.name)
@@ -625,6 +628,15 @@ _TOC_SHOU_RE = re.compile(r"^\s*(?:第\s*)?(\d{1,3})\s*首[”\"']?\s*(.{1,30}?)
 _TOC_DOT_RE = re.compile(r"^\s*(.{2,26}?)[…·.。 ]{2,}(\d{1,3})\s*$")
 
 
+def _toc_title_ok(title):
+    t = (title or "").strip()
+    if not 2 <= len(t) <= 30:
+        return False
+    cjk = len(_CJK_RE.findall(t))
+    letters = len(re.findall(r"[A-Za-z]", t))
+    return (cjk + letters) >= 2
+
+
 def parse_toc_entries(text, source=""):
     """目录识别：从文本中提取 {number,title,page} 条目。至少 3 条才算目录。"""
     entries = []
@@ -642,13 +654,13 @@ def parse_toc_entries(text, source=""):
                 if mm and len(mm.group(1)) >= 2:
                     rest, page = mm.group(1), mm.group(2)
             title = rest.strip(" […·.。、，,；;：:　]")
-            if 2 <= len(title) <= 30:
+            if _toc_title_ok(title):
                 entries.append({"number": num, "title": title, "page": page})
             continue
         m2 = _TOC_DOT_RE.match(l)
         if m2:
             title = m2.group(1).strip(" […·.。、，,；;：:　]")
-            if 2 <= len(title) <= 26:
+            if _toc_title_ok(title):
                 entries.append({"number": "", "title": title, "page": m2.group(2)})
             continue
         # “N首 + 歌名” 格式（赞美诗集目录常用：页码 + 71首 + 歌名）
@@ -659,7 +671,7 @@ def parse_toc_entries(text, source=""):
             title = re.sub(r"\d{1,3}\s+\d{1,3}\s*首.*$", "", title)
             title = re.sub(r"\d{1,3}\s*首.*$", "", title)
             title = re.sub(r"\d{1,3}\s*$", "", title).strip(" ””\"'、，,；;:：…·.。 	")
-            if 2 <= len(title) <= 30:
+            if _toc_title_ok(title):
                 entries.append({"number": num, "title": title, "page": ""})
     return entries if len(entries) >= 3 else []
 
@@ -683,6 +695,9 @@ def parse_toc_shou(text, source=""):
             title = ""
         if num not in entries or len(title) > len(entries[num]):
             entries[num] = title
+    valid = {n: t for n, t in entries.items() if _toc_title_ok(t)}
+    if len(valid) < 3:
+        return []
     return [{"number": n, "title": t, "page": ""} for n, t in entries.items()]
 
 
@@ -882,8 +897,9 @@ def ocr_image_tesseractjs_words(path):
     if not (pathlib.Path(__file__).resolve().parent / "data" / "tessdata" / "chi_sim.traineddata.gz").exists():
         return None
     cands = []
-    for scale, contrast, binarize, psm in [(2400, None, False, "4"), (3000, None, True, "4"), (2200, 1.5, False, "3")]:
-        pre = _preprocess_image_variant(path, scale, contrast, binarize=binarize)
+    for scale, contrast, binarize, psm, sharpen in [(2400, None, False, "4", False), (3000, None, True, "4", False),
+                                                    (2200, 1.5, False, "3", False)]:
+        pre = _preprocess_image_variant(path, scale, contrast, binarize=binarize, sharpen=sharpen)
         d = _run_tessjs_direct_words(pre, psm)
         try: os.unlink(pre)
         except OSError: pass
@@ -982,8 +998,10 @@ def ai_ocr_image(path, settings=None):
     except Exception:
         return None
     mime = "image/png"
-    prompt = ("你是赞美诗资料整理助手。请识别这张赞美诗图片中的文字，只输出 JSON（不要输出其他内容）："
-              '{"title":"歌名","firstLine":"歌词第一句","lyrics":"完整歌词，每句一行","number":"编号（没有则空字符串）"}')
+    prompt = ("你是赞美诗资料整理助手。请识别这张赞美诗（简谱/五线谱）图片，重点提取每首歌的【歌名】和【首行歌词】。"
+              "歌名=每首歌顶部的大字；首行歌词=第一行数字曲谱下面的第一行文字。"
+              "若一页有多首歌，全部列出。只输出 JSON（不要输出其他内容）："
+              '{"songs":[{"number":"编号或空","title":"歌名","firstLine":"首行歌词","lyrics":"该首完整歌词，每句一行"}]}')
     body = json.dumps({"model": model, "temperature": 0.1, "messages": [{"role": "user", "content": [
         {"type": "text", "text": prompt},
         {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
@@ -994,17 +1012,28 @@ def ai_ocr_image(path, settings=None):
         with urllib.request.urlopen(req, timeout=90) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         obj = json.loads(data["choices"][0]["message"]["content"])
-        return {"title": str(obj.get("title") or "").strip(),
-                "firstLine": str(obj.get("firstLine") or "").strip(),
-                "lyrics": str(obj.get("lyrics") or "").strip(),
-                "number": str(obj.get("number") or "").strip(),
-                "note": "由 AI 视觉识别，请核对后保存"}
+        songs = obj.get("songs") if isinstance(obj.get("songs"), list) else ([obj] if obj else [])
+        out = []
+        for sg in songs:
+            out.append({"number": str(sg.get("number") or "").strip(),
+                        "title": str(sg.get("title") or "").strip(),
+                        "firstLine": str(sg.get("firstLine") or "").strip(),
+                        "lyrics": str(sg.get("lyrics") or "").strip()})
+        out = [x for x in out if x["title"] or x["lyrics"]]
+        if not out:
+            return None
+        return {"songs": out, "note": "由 AI 视觉识别，请核对后保存"}
     except Exception:
         return None
 
 
 def recognize_image_full2(path, settings=None):
-    """四级识别：Vision → tesseract.js → tesseract → AI。返回 (text, engine, ai_parsed, lines)。"""
+    """识别链：AI视觉(若配置Key) → Vision → tesseract.js → tesseract。返回 (text, engine, ai_parsed, lines)。"""
+    if settings and settings.get("openaiKey"):
+        ai = ai_ocr_image(path, settings)
+        if ai and ai.get("songs"):
+            txt = "\n".join((sg.get("title") or "") + "\n" + (sg.get("lyrics") or "") for sg in ai["songs"])
+            return txt, "AI视觉", ai, None
     v = ocr_image_vision(path)
     if v:
         return v[0], "Vision", None, v[1]
@@ -1015,11 +1044,6 @@ def recognize_image_full2(path, settings=None):
     c = ocr_image_tesseract(path)
     if c:
         return c, "tesseract", None, None
-    if settings and settings.get("openaiKey"):
-        ai = ai_ocr_image(path, settings)
-        if ai and (ai.get("lyrics") or ai.get("title")):
-            txt = "\n".join(x for x in [ai.get("title"), ai.get("lyrics")] if x)
-            return txt, "AI", ai, None
     return "", "", None, None
 
 
@@ -1038,9 +1062,10 @@ def ocr_image(path):
 def parse_image_file(path, filename, settings=None):
     text, engine, ai, lines = recognize_image_full2(path, settings)
     if text and text.strip():
-        if ai and ai.get("lyrics"):
-            songs = [{"title": ai.get("title", ""), "firstLine": ai.get("firstLine", ""),
-                      "lyrics": ai.get("lyrics", ""), "source": filename}]
+        if ai and ai.get("songs"):
+            songs = [{"title": sg.get("title", ""), "firstLine": sg.get("firstLine", ""),
+                      "lyrics": sg.get("lyrics", ""), "number": sg.get("number", ""),
+                      "source": filename} for sg in ai["songs"]]
         else:
             songs = []
             # ① 目录识别：整页+左右区域放大全量识别，按首数去重全部保留

@@ -881,8 +881,12 @@ class Handler(BaseHTTPRequestHandler):
                 result["engine"] = engine
                 if text and text.strip():
                     result["text"] = text
-                    if ai and ai.get("lyrics"):
-                        result["parsed"] = ai
+                    if ai and ai.get("songs"):
+                        first = ai["songs"][0]
+                        result["songs"] = ai["songs"]
+                        result["parsed"] = {"title": first.get("title", ""), "firstLine": first.get("firstLine", ""),
+                                            "lyrics": first.get("lyrics", ""), "number": first.get("number", ""),
+                                            "note": f"AI识别到 {len(ai['songs'])} 首，已提取第一首《{first.get('title') or '未命名'}》"}
                     else:
                         words = (lines or {}).get("words") if isinstance(lines, dict) else None
                         multi = parsers.parse_ocr_columns_multi(words, fname) if words else []
