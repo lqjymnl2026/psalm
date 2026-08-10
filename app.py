@@ -877,14 +877,22 @@ class Handler(BaseHTTPRequestHandler):
                 result = {"ok": True, "attachment": attach, "text": "", "lines": [],
                           "engine": parsers.ocr_engine_name(),
                           "parsed": {"title": "", "firstLine": "", "lyrics": "", "number": "", "note": ""}}
-                text, engine, ai = parsers.recognize_image_full(str(apath), store.data.get("settings", {}))
+                text, engine, ai, lines = parsers.recognize_image_full2(str(apath), store.data.get("settings", {}))
                 result["engine"] = engine
                 if text and text.strip():
                     result["text"] = text
                     if ai and ai.get("lyrics"):
                         result["parsed"] = ai
                     else:
-                        result["parsed"] = parsers.parse_ocr_plain_text(text, fname)
+                        multi = parsers.parse_ocr_text_multi(text, fname)
+                        if multi:
+                            first = multi[0]
+                            result["songs"] = multi
+                            result["parsed"] = {"title": first["title"], "firstLine": first["firstLine"],
+                                                "lyrics": first["lyrics"], "number": "",
+                                                "note": f"识别到 {len(multi)} 首，已提取第一首" + ("《" + first["title"] + "》" if first["title"] else "") + "，请核对后保存"}
+                        else:
+                            result["parsed"] = parsers.parse_ocr_plain_text(text, fname)
                 else:
                     result["parsed"]["note"] = "本机 OCR 暂不可用，请手动填写（或在设置中配置 AI 接口）"
                 return self._json(result)

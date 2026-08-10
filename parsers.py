@@ -285,9 +285,9 @@ def parse_pdf_bytes(data: bytes, filename: str, settings=None):
             tmp.close()
             try:
                 im.save(tmp.name)
-                text, engine, ai = recognize_image_full(tmp.name, settings)
+                text, engine, ai, lines = recognize_image_full2(tmp.name, settings)
                 if text and text.strip():
-                    ocr_parts.append(text.strip())
+                    ocr_parts.append((text.strip(), lines))
             finally:
                 try:
                     os.unlink(tmp.name)
@@ -300,15 +300,21 @@ def parse_pdf_bytes(data: bytes, filename: str, settings=None):
     if not full.strip():
         return [], ["PDF 无法识别文字（扫描版需 OCR：请安装 tesseract 或在设置中配置 AI 接口）"]
     if ocr_used:
-        # 扫描版：每页按歌谱规则解析为一首
+        # 扫描版：每页支持一页多首切分
         songs = []
-        for page_txt in ocr_parts:
+        for page_txt, page_lines in ocr_parts:
             if not page_txt.strip():
                 continue
-            parsed = parse_ocr_plain_text(page_txt, filename)
-            songs.append({"title": parsed["title"], "firstLine": parsed["firstLine"],
-                          "lyrics": parsed["lyrics"], "source": filename,
-                          "flags": ["PDF-OCR"]})
+            multi = parse_ocr_lines_multi(page_lines, filename) if page_lines else []
+            if multi:
+                for m in multi:
+                    songs.append({"title": m["title"], "firstLine": m["firstLine"],
+                                  "lyrics": m["lyrics"], "source": filename, "flags": ["PDF-OCR"]})
+            else:
+                parsed = parse_ocr_plain_text(page_txt, filename)
+                songs.append({"title": parsed["title"], "firstLine": parsed["firstLine"],
+                              "lyrics": parsed["lyrics"], "source": filename,
+                              "flags": ["PDF-OCR"]})
         return songs, warnings
     songs, seg_warn = segment_hymn_text(full, filename)
     warnings.extend(seg_warn)
@@ -415,8 +421,8 @@ def _find_node_modules():
     return cand if os.path.isdir(cand) else None
 
 
-def _preprocess_image_variant(path, scale_target=2200, contrast=None):
-    """OCR 前预处理：EXIF 转正 + 缩放到指定大小 + 灰度 + 可选对比度。"""
+def _preprocess_image_variant(path, scale_target=2200, contrast=None, binarize=False):
+    """OCR 前预处理：EXIF 转正 + 缩放到指定大小 + 灰度 + 可选对比度/二值化。"""
     try:
         from PIL import Image, ImageOps, ImageEnhance
         im = Image.open(path)
@@ -433,6 +439,8 @@ def _preprocess_image_variant(path, scale_target=2200, contrast=None):
         im = ImageOps.autocontrast(im)
         if contrast:
             im = ImageEnhance.Contrast(im).enhance(contrast)
+        if binarize:
+            im = im.point(lambda x: 0 if x < 175 else 255)
         tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
         tmp.close()
         im.save(tmp.name)
@@ -517,14 +525,140 @@ def _run_tessjs_direct(pre, psm):
         return None
 
 
+def _run_tessjs_direct_lines(pre, psm):
+    """运行 tesseract.js 并返回带坐标的行列表 [{text,x,y,w,h,conf}] 或 None。"""
+    node = _find_node()
+    script = pathlib.Path(__file__).resolve().parent / "tools" / "ocr_tessera.js"
+    mods = _find_node_modules()
+    if not node or not script.exists() or not mods:
+        return None
+    env = dict(os.environ)
+    env["NODE_PATH"] = mods
+    try:
+        out = subprocess.run([node, str(script), pre, psm, "--json"], capture_output=True, timeout=300, env=env)
+        if out.returncode != 0:
+            return None
+        lines = json.loads(out.stdout.decode("utf-8", errors="replace"))
+        return lines if isinstance(lines, list) else None
+    except Exception:
+        return None
+
+
+def parse_ocr_lines_multi(lines, source=""):
+    """一页多首歌切分：大字标题 = 歌曲起点。
+    规则：歌名 = 每首歌顶部大字（行高显著大于中位数的短行）；
+    首行歌词 = 该歌曲谱（数字）行之后的第一行文字。
+    返回 [{title, firstLine, lyrics}]；无法识别大字标题时返回 []。"""
+    rows = [l for l in lines if l.get("text") and l["text"].strip()]
+    if not rows:
+        return []
+    hs = sorted(l.get("h", 0) for l in rows)
+    med = hs[len(hs) // 2] if hs else 0
+    title_rows = []
+    for l in rows:
+        t = l["text"].strip()
+        if (2 <= len(t) <= 14 and not re.search(r"[，。；：？！、…,.;:?!]", t)
+                and l.get("h", 0) >= med * 1.15):
+            title_rows.append(l)
+    if not title_rows:
+        return []
+    # 按标题行切分
+    songs = []
+    cur = None
+    for l in rows:
+        t = l["text"].strip()
+        if any(l is tr for tr in title_rows):
+            if cur:
+                songs.append(cur)
+            cur = {"title": t, "seg": []}
+        elif cur is not None:
+            cur["seg"].append(t)
+    if cur:
+        songs.append(cur)
+
+    result = []
+    for song in songs:
+        seg = song["seg"]
+        lyric_lines = [l for l in seg if not _is_notation_line(l)]
+        # 段内第一个曲谱行位置 → 之后的第一个文字行为首行
+        first_nota = next((i for i, l in enumerate(seg) if _is_notation_line(l)), None)
+        after = [l for i, l in enumerate(seg) if first_nota is not None and i > first_nota and not _is_notation_line(l)]
+        first = after[0] if after else (lyric_lines[0] if lyric_lines else "")
+        result.append({"title": song["title"], "firstLine": first, "lyrics": "\n".join(lyric_lines)})
+    return result
+
+
+def _pick_best_lines(lines_list):
+    """多通道行结果中，取“歌曲数×歌名/首行完整度”最优。"""
+    best, best_score = None, -1
+    for lines in lines_list:
+        if not lines:
+            continue
+        songs = parse_ocr_lines_multi(lines, "")
+        if not songs:
+            continue
+        score = 0
+        for sg in songs:
+            score += (2 if sg["title"] else 0) + len(_CJK_RE.findall(sg["firstLine"] or ""))
+        if score > best_score:
+            best, best_score = lines, score
+    return best
+
+
+def ocr_image_tesseractjs_lines(path):
+    """双通道识别，返回带坐标行（供一页多首切分）。"""
+    if not (pathlib.Path(__file__).resolve().parent / "data" / "tessdata" / "chi_sim.traineddata.gz").exists():
+        return None
+    pre1 = _preprocess_image_variant(path, 2400, None)
+    l1 = _run_tessjs_direct_lines(pre1, "4")
+    try: os.unlink(pre1)
+    except OSError: pass
+    pre2 = _preprocess_image_variant(path, 2200, 1.5)
+    l2 = _run_tessjs_direct_lines(pre2, "3")
+    try: os.unlink(pre2)
+    except OSError: pass
+    return _pick_best_lines([l1, l2]) or (l1 or l2)
+
+
+def parse_ocr_text_multi(text, source=""):
+    """一页多首切分（文字顺序版，不依赖坐标）：
+    歌名 = 短行大字，且其下一行是数字曲谱行（如 51/3% 343…）→ 视为新歌起点。
+    首行歌词 = 该首曲谱行之后的第一个文字行。返回 [{title, firstLine, lyrics}]。"""
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    titles = []
+    for i, l in enumerate(lines):
+        t = l
+        if (2 <= len(t) <= 14 and not re.search(r"[，。；：？！、…,.;:?!]", t)
+                and not _is_notation_line(t)):
+            nxt = lines[i + 1] if i + 1 < len(lines) else ""
+            if nxt and _is_notation_line(nxt) and re.search(r"\d", nxt):
+                titles.append(i)
+    if not titles:
+        return []
+    songs = []
+    for k, idx in enumerate(titles):
+        end = titles[k + 1] if k + 1 < len(titles) else len(lines)
+        seg = lines[idx + 1:end]
+        title = lines[idx]
+        lyric_lines = [l for l in seg if not _is_notation_line(l)]
+        first_nota = next((i for i, l in enumerate(seg) if _is_notation_line(l)), None)
+        after = [l for i, l in enumerate(seg)
+                 if first_nota is not None and i > first_nota and not _is_notation_line(l)]
+        first = after[0] if after else (lyric_lines[0] if lyric_lines else "")
+        songs.append({"title": title, "firstLine": first, "lyrics": "\n".join(lyric_lines)})
+    return songs
+
+
 def _pick_best_ocr_text(texts):
-    """多通道识别结果中，取“歌名+首行歌词”最完整的一个。"""
+    """多通道识别结果中，取“歌名+首行歌词+可切分首数”最完整的一个。"""
     best, best_score = None, -1
     for t in texts:
         if not t:
             continue
         p = parse_ocr_plain_text(t, "")
         score = (2 if p.get("title") else 0) + len(_CJK_RE.findall(p.get("firstLine") or ""))
+        multi = parse_ocr_text_multi(t, "")
+        score += len(multi) * 3  # 一页多首是重要信号
         if score > best_score:
             best, best_score = t, score
     return best
@@ -534,18 +668,27 @@ def ocr_image_tesseractjs(path):
     """tesseract.js（Node，离线 CPU，自带中文模型）。双通道识别取最优。返回文本或 None。"""
     if not (pathlib.Path(__file__).resolve().parent / "data" / "tessdata" / "chi_sim.traineddata.gz").exists():
         return None
-    # 通道1：放大2400 + 无对比度 + PSM4（对歌谱小字最好）
+    texts = []
+    # 通道1：放大2400 + 无对比度 + PSM4
     pre1 = _preprocess_image_variant(path, 2400, None)
     t1 = _run_tessjs_direct(pre1, "4")
     try: os.unlink(pre1)
     except OSError: pass
-    # 通道2：放大2200 + 对比度1.5 + PSM3
-    pre2 = _preprocess_image_variant(path, 2200, 1.5)
-    t2 = _run_tessjs_direct(pre2, "3")
+    texts.append(t1)
+    # 通道2：放大3000 + 二值化 + PSM4（对印刷歌谱最有效）
+    pre2 = _preprocess_image_variant(path, 3000, None, binarize=True)
+    t2 = _run_tessjs_direct(pre2, "4")
     try: os.unlink(pre2)
     except OSError: pass
-    best = _pick_best_ocr_text([t1, t2])
-    return best or (t1 or t2)
+    texts.append(t2)
+    # 通道3：放大2200 + 对比度1.5 + PSM3
+    pre3 = _preprocess_image_variant(path, 2200, 1.5)
+    t3 = _run_tessjs_direct(pre3, "3")
+    try: os.unlink(pre3)
+    except OSError: pass
+    texts.append(t3)
+    best = _pick_best_ocr_text(texts)
+    return best or next((x for x in texts if x), None)
 
 
 def ocr_image_tesseract(path):
@@ -602,23 +745,29 @@ def ai_ocr_image(path, settings=None):
         return None
 
 
-def recognize_image_full(path, settings=None):
-    """四级识别：Vision → tesseract.js → tesseract → AI。返回 (text, engine, ai_parsed)。"""
+def recognize_image_full2(path, settings=None):
+    """四级识别：Vision → tesseract.js → tesseract → AI。返回 (text, engine, ai_parsed, lines)。"""
     v = ocr_image_vision(path)
     if v:
-        return v[0], "Vision", None
+        return v[0], "Vision", None, v[1]
     t = ocr_image_tesseractjs(path)
     if t:
-        return t, "tesseract.js", None
+        lines = ocr_image_tesseractjs_lines(path)
+        return t, "tesseract.js", None, lines
     c = ocr_image_tesseract(path)
     if c:
-        return c, "tesseract", None
+        return c, "tesseract", None, None
     if settings and settings.get("openaiKey"):
         ai = ai_ocr_image(path, settings)
         if ai and (ai.get("lyrics") or ai.get("title")):
             txt = "\n".join(x for x in [ai.get("title"), ai.get("lyrics")] if x)
-            return txt, "AI", ai
-    return "", "", None
+            return txt, "AI", ai, None
+    return "", "", None, None
+
+
+def recognize_image_full(path, settings=None):
+    text, engine, ai, _lines = recognize_image_full2(path, settings)
+    return text, engine, ai
 
 
 def ocr_image(path):
@@ -629,16 +778,21 @@ def ocr_image(path):
 
 
 def parse_image_file(path, filename, settings=None):
-    text, engine, ai = recognize_image_full(path, settings)
+    text, engine, ai, lines = recognize_image_full2(path, settings)
     if text and text.strip():
         if ai and ai.get("lyrics"):
             songs = [{"title": ai.get("title", ""), "firstLine": ai.get("firstLine", ""),
                       "lyrics": ai.get("lyrics", ""), "source": filename}]
         else:
-            # 与拍照识别一致：歌名=曲谱前大字，首行=曲谱行后第一行文字
-            parsed = parse_ocr_plain_text(text, filename)
-            songs = [{"title": parsed["title"], "firstLine": parsed["firstLine"],
-                      "lyrics": parsed["lyrics"], "source": filename}]
+            # 一页多首：标题后跟数字曲谱行 = 新歌起点
+            multi = parse_ocr_text_multi(text, filename)
+            if multi:
+                songs = [{"title": m["title"], "firstLine": m["firstLine"],
+                          "lyrics": m["lyrics"], "source": filename} for m in multi]
+            else:
+                parsed = parse_ocr_plain_text(text, filename)
+                songs = [{"title": parsed["title"], "firstLine": parsed["firstLine"],
+                          "lyrics": parsed["lyrics"], "source": filename}]
         for s in songs:
             s.setdefault("flags", []).append("OCR识别")
         return songs, []
