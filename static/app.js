@@ -22,9 +22,17 @@ function el(tag, attrs = {}, children = []) {
 }
 
 async function api(path, opts = {}) {
-  const res = await fetch(path, opts);
+  const headers = { ...(opts.headers || {}) };
+  if (state.token) headers["X-Admin-Token"] = state.token;
+  const res = await fetch(path, { ...opts, headers });
   let data = null;
   try { data = await res.json(); } catch (e) { /* ignore */ }
+  if (res.status === 401 && !path.startsWith("/api/login")) {
+    localStorage.removeItem("hymn_token");
+    state.token = "";
+    showLogin();
+    throw new Error((data && data.msg) || "需要登录");
+  }
   if (!res.ok || (data && data.ok === false && !data.summary)) {
     throw new Error((data && data.msg) || `请求失败 ${res.status}`);
   }
@@ -861,7 +869,7 @@ async function renderExport() {
       <div id="exportList">${ex.exports.length ? ex.exports.map((f) => `
         <div class="file-row">
           <div><div class="fr-name">${esc(f.name)}</div><div class="fr-meta">${esc(f.format.toUpperCase())} · ${fmtSize(f.size)} · ${esc(f.time)} · ${f.count} 首</div></div>
-          <a class="btn btn-sm btn-primary" href="/files/exports/${encodeURIComponent(f.name)}" download>下载</a>
+          <a class="btn btn-sm btn-primary" href="/files/exports/${encodeURIComponent(f.name)}?token=${encodeURIComponent(state.token || "")}" download>下载</a>
         </div>`).join("") : `<div class="muted small">还没有导出文件</div>`}
       </div>
     </div>`;
@@ -935,7 +943,7 @@ function bindExport() {
       if (!d.ok) return toast(d.msg || "导出失败", "err");
       d.files.forEach((f) => {
         const a = document.createElement("a");
-        a.href = "/files/exports/" + encodeURIComponent(f.name);
+        a.href = "/files/exports/" + encodeURIComponent(f.name) + "?token=" + encodeURIComponent(state.token || "");
         a.download = f.name;
         document.body.append(a); a.click(); a.remove();
       });
@@ -982,7 +990,7 @@ async function openSongModal(id) {
       <div class="form-group full">
         <label>附件（曲谱 / 音频 / 图片）</label>
         <div class="flex flex-wrap" id="attachList">${(s.attachments || []).map((a) => `
-          <a class="chip blue" href="/files/uploads/${encodeURIComponent(a.name)}" download>📎 ${esc(a.name)}</a>`).join("") || `<span class="muted small">无附件</span>`}</div>
+          <a class="chip blue" href="/files/uploads/${encodeURIComponent(a.name)}?token=${encodeURIComponent(state.token || "")}" download>📎 ${esc(a.name)}</a>`).join("") || `<span class="muted small">无附件</span>`}</div>
         <input type="file" id="m_attach" class="mt8">
       </div>
     </div>`;
@@ -1032,6 +1040,33 @@ function refreshStats() {
   api("/api/bootstrap").then((d) => { state.stats = d.stats; state.settings = d.settings; updatePills(d); }).catch(() => {});
 }
 
+function showLogin() {
+  $("#content").innerHTML = `
+    <div class="card card-pad" style="max-width:380px;margin:60px auto;text-align:center">
+      <div style="font-size:42px">🔒</div>
+      <h2 style="margin:10px 0">后台管理端</h2>
+      <p class="muted small mb16">请输入管理密码</p>
+      <input id="loginPwd" type="password" placeholder="管理密码" style="width:100%;padding:11px;border:1px solid var(--line);border-radius:9px;font-size:15px;outline:none">
+      <button class="btn btn-primary w100 mt12" id="loginBtn" style="padding:11px">登 录</button>
+      <div class="muted small mt12">📱 手机采集端无需密码：/mobile</div>
+    </div>`;
+  const go = async () => {
+    const pwd = $("#loginPwd").value;
+    try {
+      const d = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: pwd }) });
+      const j = await d.json().catch(() => ({}));
+      if (d.status !== 200 || !j.ok) { toast("密码错误", "err"); return; }
+      state.token = j.token;
+      localStorage.setItem("hymn_token", j.token);
+      toast("登录成功");
+      navigate();
+    } catch (e) { toast("登录失败：" + e.message, "err"); }
+  };
+  $("#loginBtn").addEventListener("click", go);
+  $("#loginPwd").addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+  $("#loginPwd").focus();
+}
+
 function bindGlobal() {
   window.addEventListener("hashchange", navigate);
   $("#btnSettings").addEventListener("click", openSettings);
@@ -1043,6 +1078,12 @@ function bindGlobal() {
       openaiModel: $("#setModel").value.trim(), openaiEnabled: !!$("#setKey").value.trim(),
     };
     const d = await api("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const oldp = $("#setOldPwd").value, newp = $("#setNewPwd").value;
+    if (oldp || newp) {
+      const r = await api("/api/password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ old: oldp, new: newp }) });
+      toast(r.msg || "密码已修改");
+      $("#setOldPwd").value = ""; $("#setNewPwd").value = "";
+    }
     state.settings = d.settings;
     $("#settingsModal").hidden = true;
     updatePills({ settings: d.settings });
@@ -1061,6 +1102,11 @@ function bindGlobal() {
   if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
     navigator.serviceWorker.register("/static/sw.js").catch(() => {});
   }
+  state.token = localStorage.getItem("hymn_token") || "";
+  try {
+    const a = await api("/api/auth/check");
+    if (a && a.authed === false) { showLogin(); return; }
+  } catch (e) { /* 服务未开 */ }
   try { await refreshStats(); } catch (e) { /* server maybe starting */ }
   navigate();
 })();

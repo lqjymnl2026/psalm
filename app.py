@@ -7,6 +7,7 @@ import json
 import mimetypes
 import os
 import re
+import secrets
 import shutil
 import sys
 import threading
@@ -35,6 +36,53 @@ if _cat_path.exists():
         CATEGORIES = json.loads(_cat_path.read_text("utf-8"))
     except Exception:
         CATEGORIES = None
+
+ADMIN = None
+_admin_path = DATA / "admin.json"
+if _admin_path.exists():
+    try:
+        ADMIN = json.loads(_admin_path.read_text("utf-8"))
+    except Exception:
+        ADMIN = None
+_ADMIN_TOKENS = {}  # token -> 过期时间戳
+
+
+def _admin_enabled():
+    return bool(ADMIN and ADMIN.get("hash"))
+
+
+def _check_password(pwd):
+    if not _admin_enabled():
+        return True
+    import hashlib
+    return hashlib.sha256(((ADMIN.get("salt") or "") + pwd).encode("utf-8")).hexdigest() == ADMIN.get("hash")
+
+
+def _check_auth(headers, qs=None):
+    if not _admin_enabled():
+        return True
+    token = headers.get("X-Admin-Token") or ""
+    if not token and qs:
+        token = (qs.get("token") or [""])[0]
+    if not token:
+        # cookie
+        ck = headers.get("Cookie") or ""
+        m = re.search(r"hymn_admin=([^;]+)", ck)
+        token = m.group(1) if m else ""
+    return token in _ADMIN_TOKENS and _ADMIN_TOKENS[token] > time.time()
+
+
+def _is_public(path, method):
+    if path.startswith("/static/") or path.startswith("/files/samples/"):
+        return True
+    if path in ("/", "/index.html", "/mobile", "/m", "/mobile.html", "/qr", "/phone",
+                "/api/bootstrap", "/api/songs/template", "/api/auth/check"):
+        return True
+    if method == "POST" and path in ("/api/ocr", "/api/import", "/api/login"):
+        return True
+    if method == "POST" and path == "/api/songs":
+        return True  # 手机端保存
+    return False
 
 PORT = int(os.environ.get("PORT", "8787"))
 HOST = os.environ.get("HOST", "127.0.0.1")
@@ -609,6 +657,8 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         qs = urllib.parse.parse_qs(parsed.query)
         try:
+            if _admin_enabled() and not _is_public(path, "GET") and not _check_auth(self.headers, qs):
+                return self._json({"ok": False, "msg": "需要登录"}, 401)
             if path == "/" or path == "/index.html":
                 return self._serve_file(STATIC / "index.html", "text/html; charset=utf-8")
             if path in ("/mobile", "/m", "/mobile.html"):
@@ -691,6 +741,35 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         try:
+            if _admin_enabled() and not _is_public(path, "POST") and not _check_auth(self.headers):
+                return self._json({"ok": False, "msg": "需要登录"}, 401)
+            if path == "/api/login":
+                body = self._json_body()
+                if _check_password(body.get("password", "")):
+                    token = secrets.token_hex(16)
+                    _ADMIN_TOKENS[token] = time.time() + 7 * 86400
+                    self.send_response(200)
+                    self.send_header("Set-Cookie", f"hymn_admin={token}; Path=/; HttpOnly; Max-Age=604800")
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"ok": True, "token": token}, ensure_ascii=False).encode("utf-8"))
+                    return
+                return self._json({"ok": False, "msg": "密码错误"}, 401)
+            if path == "/api/auth/check":
+                return self._json({"ok": True, "authed": _check_auth(self.headers, qs)})
+            if path == "/api/password":
+                body = self._json_body()
+                if not _check_password(body.get("old", "")):
+                    return self._json({"ok": False, "msg": "原密码错误"}, 401)
+                newp = (body.get("new") or "").strip()
+                if len(newp) < 4:
+                    return self._json({"ok": False, "msg": "新密码至少 4 位"}, 400)
+                import hashlib
+                salt = secrets.token_hex(8)
+                ADMIN["salt"] = salt
+                ADMIN["hash"] = hashlib.sha256((salt + newp).encode("utf-8")).hexdigest()
+                _admin_path.write_text(json.dumps(ADMIN, ensure_ascii=False, indent=1), "utf-8")
+                return self._json({"ok": True, "msg": "密码已修改"})
             if path == "/api/ocr":
                 ctype = self.headers.get("Content-Type", "")
                 parts = parse_multipart(self._read_body(), ctype)
