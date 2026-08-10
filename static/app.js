@@ -212,8 +212,8 @@ function updatePills(d) {
   const ocr = d.ocrAvailable;
   const ai = !!(d.settings && d.settings.openaiKey);
   const op = $("#ocrPill"), ap = $("#aiPill");
-  const eng = d.ocrEngine || "";
-  op.textContent = "OCR：" + (eng ? (eng === "Vision" ? "Vision已就绪" : "tesseract") : "未就绪");
+  const engs = (d.ocrEngines && d.ocrEngines.length) ? d.ocrEngines.join("+") : (d.ocrEngine || "");
+  op.textContent = "OCR：" + (engs ? engs + "已就绪" : "未就绪");
   op.classList.toggle("ok", !!ocr);
   ap.textContent = "AI：" + (ai ? "已配置" : "本地引擎");
   ap.classList.toggle("ok", !!ai);
@@ -252,10 +252,10 @@ async function renderCollection() {
         <button class="btn btn-primary" id="btnCamera"><span class="bu-ico">📷</span>拍照上传诗歌</button>
         <button class="btn" id="btnGallery"><span class="bu-ico">🖼️</span>相册 / 文件</button>
       </div>
-      <input type="file" id="fileInput" multiple hidden
+      <input type="file" id="fileInput" multiple class="vh"
         accept=".xlsx,.xlsm,.xls,.csv,.pdf,.docx,.doc,.jpg,.jpeg,.png,.bmp,.webp,.gif,.tif,.tiff,.mp3,.wav,.m4a,.aac,.flac,.ogg">
-      <input type="file" id="cameraInput" hidden accept="image/*" capture="environment">
-      <input type="file" id="galleryInput" hidden multiple
+      <input type="file" id="cameraInput" class="vh" accept="image/*" capture="environment">
+      <input type="file" id="galleryInput" multiple class="vh"
         accept=".xlsx,.xlsm,.xls,.csv,.pdf,.docx,.doc,.jpg,.jpeg,.png,.bmp,.webp,.gif,.tif,.tiff,.mp3,.wav,.m4a,.aac,.flac,.ogg">
       <div id="importProgress" class="mt12" hidden><span class="spin"></span>正在导入并智能整理，请稍候…</div>
       <div id="importResult" class="mt12"></div>
@@ -459,7 +459,7 @@ async function renderOrganize() {
       <div class="grid-3 mt12">
         <div class="card card-pad">
           <div class="card-title small">OCR 引擎</div>
-          <div>${d.ocrAvailable ? "✅ OCR 已就绪（" + esc(d.ocrEngine || "Vision") + "，支持中文）" : "⚠️ OCR 未就绪"}</div>
+          <div>${d.ocrAvailable ? "✅ OCR 已就绪（" + esc(((d.ocrEngines && d.ocrEngines.length) ? d.ocrEngines.join(" + ") : d.ocrEngine) || "Vision") + "，支持中文）" : "⚠️ OCR 未就绪"}</div>
           <div class="hint mt8">手机拍照后自动识别歌名与歌词并填入表单。${d.ocrAvailable ? "" : "可在本机安装 tesseract+chi_sim，或在设置中配置 AI 接口。"}</div>
         </div>
         <div class="card card-pad">

@@ -348,9 +348,18 @@ def ensure_ocr_tool():
 def ocr_engine_name():
     if ensure_ocr_tool():
         return "Vision"
+    if _tessjs_ready():
+        return "tesseract.js"
     if shutil.which("tesseract"):
         return "tesseract"
     return ""
+
+
+def _tessjs_ready():
+    node = _find_node()
+    script = pathlib.Path(__file__).resolve().parent / "tools" / "ocr_tessera.js"
+    td = pathlib.Path(__file__).resolve().parent / "data" / "tessdata" / "chi_sim.traineddata.gz"
+    return bool(node and script.exists() and td.exists() and _find_node_modules())
 
 
 def ocr_available():
@@ -373,6 +382,70 @@ def ocr_image_vision(path):
         return (text, lines) if text.strip() else None
     except Exception:
         return None
+
+
+def _find_node():
+    import glob
+    cands = [os.environ.get("NODE_BIN", ""),
+             "/Users/macbook/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node"]
+    cands += sorted(glob.glob(os.path.expanduser("~/.cache/codex-runtimes/*/dependencies/node/bin/node")), key=len)
+    cands += [shutil.which("node") or ""]
+    for c in cands:
+        if c and os.path.exists(c):
+            return c
+    return None
+
+
+def _find_node_modules():
+    node = _find_node()
+    if not node:
+        return None
+    cand = os.path.join(os.path.dirname(os.path.dirname(node)), "node_modules")
+    return cand if os.path.isdir(cand) else None
+
+
+def _preprocess_image(path):
+    """灰度 + 自动对比度 + 小图放大，提升 OCR 准确率。返回处理后的临时路径。"""
+    try:
+        from PIL import Image, ImageOps
+        im = Image.open(path).convert("L")
+        w, h = im.size
+        if max(w, h) < 1100:
+            scale = max(1.4, 1100 / max(w, h))
+            im = im.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+        im = ImageOps.autocontrast(im)
+        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        tmp.close()
+        im.save(tmp.name)
+        return tmp.name
+    except Exception:
+        return path
+
+
+def ocr_image_tesseractjs(path):
+    """tesseract.js（Node，离线 CPU，自带中文模型）。返回文本或 None。"""
+    node = _find_node()
+    script = pathlib.Path(__file__).resolve().parent / "tools" / "ocr_tessera.js"
+    mods = _find_node_modules()
+    if not node or not script.exists() or not mods:
+        return None
+    if not (pathlib.Path(__file__).resolve().parent / "data" / "tessdata" / "chi_sim.traineddata.gz").exists():
+        return None
+    pre = _preprocess_image(path)
+    env = dict(os.environ)
+    env["NODE_PATH"] = mods
+    try:
+        out = subprocess.run([node, str(script), pre], capture_output=True, timeout=240, env=env)
+        t = out.stdout.decode("utf-8", errors="replace").strip()
+        return t or None
+    except Exception:
+        return None
+    finally:
+        try:
+            if pre != path:
+                os.unlink(pre)
+        except OSError:
+            pass
 
 
 def ocr_image_tesseract(path):
@@ -430,13 +503,16 @@ def ai_ocr_image(path, settings=None):
 
 
 def recognize_image_full(path, settings=None):
-    """三级识别：Vision → tesseract → AI。返回 (text, engine, ai_parsed)。"""
+    """四级识别：Vision → tesseract.js → tesseract → AI。返回 (text, engine, ai_parsed)。"""
     v = ocr_image_vision(path)
     if v:
         return v[0], "Vision", None
-    t = ocr_image_tesseract(path)
+    t = ocr_image_tesseractjs(path)
     if t:
-        return t, "tesseract", None
+        return t, "tesseract.js", None
+    c = ocr_image_tesseract(path)
+    if c:
+        return c, "tesseract", None
     if settings and settings.get("openaiKey"):
         ai = ai_ocr_image(path, settings)
         if ai and (ai.get("lyrics") or ai.get("title")):
@@ -550,6 +626,18 @@ def parse_song_from_ocr(lines, source=""):
         note = "已自动提取歌名与歌词，请核对后保存"
     return {"title": title, "firstLine": (lyrics_lines[0] if lyrics_lines else ""),
             "lyrics": lyrics, "number": number, "note": note}
+
+
+def parse_ocr_plain_text(text: str, source=""):
+    """纯文本 OCR 结果 → {title, firstLine, lyrics, number, note}。"""
+    songs, _w = segment_hymn_text(text, source)
+    if songs:
+        s = songs[0]
+        return {"title": s["title"], "firstLine": s.get("firstLine", ""),
+                "lyrics": s.get("lyrics", ""), "number": s.get("number", ""),
+                "note": "已自动提取歌名与歌词，请核对后保存"}
+    lines = [{"text": l, "y": i * 0.01, "h": 0.02, "conf": 1.0} for i, l in enumerate(text.splitlines())]
+    return parse_song_from_ocr(lines)
 
 
 def parse_ocr_text(text: str, source=""):

@@ -606,6 +606,10 @@ class Handler(BaseHTTPRequestHandler):
                     "samples": [f"/files/samples/{p}" for p in sorted(os.listdir(SAMPLES)) if not p.startswith(".")],
                     "ocrAvailable": parsers.ocr_available(),
                     "ocrEngine": parsers.ocr_engine_name(),
+                    "ocrEngines": [n for n in ("Vision", "tesseract.js", "tesseract")
+                                   if (n == "Vision" and parsers.ensure_ocr_tool())
+                                   or (n == "tesseract.js" and parsers._tessjs_ready())
+                                   or (n == "tesseract" and shutil.which("tesseract"))],
                     "lanUrls": [f"http://{ip}:{PORT}" for ip in get_lan_ips()],
                     "host": HOST, "port": PORT})
             if path == "/api/stats":
@@ -671,22 +675,16 @@ class Handler(BaseHTTPRequestHandler):
                 result = {"ok": True, "attachment": attach, "text": "", "lines": [],
                           "engine": parsers.ocr_engine_name(),
                           "parsed": {"title": "", "firstLine": "", "lyrics": "", "number": "", "note": ""}}
-                vis = parsers.ocr_image_vision(str(apath))
-                if vis:
-                    text, lines = vis
+                text, engine, ai = parsers.recognize_image_full(str(apath), store.data.get("settings", {}))
+                result["engine"] = engine
+                if text and text.strip():
                     result["text"] = text
-                    result["lines"] = lines
-                    parsed = parsers.parse_ocr_text(text, fname) or parsers.parse_song_from_ocr(lines)
-                    result["parsed"] = parsed
-                    result["engine"] = "Vision"
-                else:
-                    ai = parsers.ai_ocr_image(str(apath), store.data.get("settings", {}))
-                    if ai and (ai.get("title") or ai.get("lyrics")):
-                        result["text"] = ai.get("lyrics", "")
+                    if ai and ai.get("lyrics"):
                         result["parsed"] = ai
-                        result["engine"] = "AI视觉"
                     else:
-                        result["parsed"]["note"] = "本机 OCR 暂不可用，请手动填写（或在设置中配置 AI 接口）"
+                        result["parsed"] = parsers.parse_ocr_plain_text(text, fname)
+                else:
+                    result["parsed"]["note"] = "本机 OCR 暂不可用，请手动填写（或在设置中配置 AI 接口）"
                 return self._json(result)
             if path == "/api/import":
                 ctype = self.headers.get("Content-Type", "")

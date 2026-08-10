@@ -67,11 +67,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans G
   <div class="card">
     <h2>📷 拍照 / 相册 收集</h2>
     <div class="capture">
-      <div class="cap primary" id="btnCam"><span class="i">📷</span>拍照识别</div>
-      <div class="cap" id="btnGal"><span class="i">🖼️</span>相册/文件</div>
+      <label class="cap primary" for="camInput"><span class="i">📷</span>拍照识别</label>
+      <label class="cap" for="galInput"><span class="i">🖼️</span>相册照片</label>
+      <label class="cap" for="docInput" style="grid-column:1/-1"><span class="i">📄</span>文件导入（PDF / Excel / Word）</label>
     </div>
-    <input type="file" id="camInput" hidden accept="image/*" capture="environment">
-    <input type="file" id="galInput" hidden multiple accept=".xlsx,.xlsm,.xls,.csv,.pdf,.docx,.doc,.jpg,.jpeg,.png,.bmp,.webp,.gif,.tif,.tiff,.mp3,.wav,.m4a,.aac,.flac,.ogg">
+    <input type="file" id="camInput" accept="image/*" capture="environment" style="position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0">
+    <input type="file" id="galInput" accept="image/*" multiple style="position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0">
+    <input type="file" id="docInput" accept=".pdf,.xlsx,.xlsm,.xls,.csv,.docx,.doc" multiple style="position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0">
     <div class="ocr" id="ocrBox">
       <b>📷 识别结果</b> <span class="badge" id="ocrEngine"></span>
       <div class="note" id="ocrNote"></div>
@@ -160,10 +162,9 @@ async function handleImport(files) {
     refreshCnt();
   } catch (e) { toast("导入失败：" + e.message, 4000); }
 }
-$("#btnCam").addEventListener("click", () => $("#camInput").click());
-$("#btnGal").addEventListener("click", () => $("#galInput").click());
 $("#camInput").addEventListener("change", () => { const f = $("#camInput").files[0]; $("#camInput").value = ""; if (f) handlePhoto(f); });
 $("#galInput").addEventListener("change", () => { const fs = $("#galInput").files; $("#galInput").value = ""; if (fs.length) handleImport(fs); });
+$("#docInput").addEventListener("change", () => { const fs = $("#docInput").files; $("#docInput").value = ""; if (fs.length) handleImport(fs); });
 $("#saveBtn").addEventListener("click", async () => {
   const title = $("#title").value.trim();
   if (!title) { toast("请填写歌名", 2600); $("#title").focus(); return; }
