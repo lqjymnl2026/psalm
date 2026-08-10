@@ -229,6 +229,7 @@ async function renderDashboard() {
       <div class="flex flex-wrap">
         <button class="btn btn-primary" data-goto="collection">📥 批量导入</button>
         <button class="btn btn-gold" id="dashMobile">📱 手机快捷收集</button>
+        <button class="btn" id="dashJianpu">🎼 简谱编辑器</button>
         <button class="btn" data-goto="organize">🧠 一键智能整理</button>
         <button class="btn" data-goto="review">✅ 去审核</button>
         <button class="btn btn-gold" data-goto="export">📤 导出中心</button>
@@ -243,6 +244,8 @@ function bindGoto() {
   document.querySelectorAll("[data-goto]").forEach((b) => b.addEventListener("click", () => { location.hash = "#/" + b.dataset.goto; }));
   const dm = $("#dashMobile");
   if (dm) dm.addEventListener("click", () => { location.href = "/mobile"; });
+  const dj = $("#dashJianpu");
+  if (dj) dj.addEventListener("click", () => { location.href = "/jianpu"; });
 }
 
 function updatePills(d) {

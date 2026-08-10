@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>简谱编辑器 · 赞美诗中心</title>
+<style>
+:root{--ink:#1c2740;--ink2:#5b6b85;--primary:#4b6eaf;--gold:#c9a227;--line:#e3e8f0;--bg:#f2f5fa}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);}
+.top{background:linear-gradient(135deg,#1e2942,#3a5791);color:#fff;padding:14px 20px;display:flex;justify-content:space-between;align-items:center}
+.top h1{font-size:18px}
+.top a{color:#ffd970;text-decoration:none;font-size:13px;background:rgba(255,255,255,.12);padding:6px 12px;border-radius:8px}
+.wrap{max-width:1100px;margin:0 auto;padding:16px}
+.grid{display:grid;grid-template-columns:1fr 1.4fr;gap:16px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px}
+.card h2{font-size:14px;margin-bottom:8px}
+textarea{width:100%;min-height:220px;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:13px;font-family:ui-monospace,Menlo,monospace;line-height:1.7;resize:vertical;outline:none}
+textarea:focus{border-color:var(--primary)}
+.btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer}
+.btn-primary{background:var(--primary);color:#fff;border-color:var(--primary)}
+.btn-gold{background:var(--gold);color:#fff;border-color:var(--gold)}
+.btn:hover{opacity:.9}
+.mt8{margin-top:8px}.mt12{margin-top:12px}
+.hint{font-size:12px;color:var(--ink2);line-height:1.8}
+.hint b{color:var(--primary)}
+#score{overflow:auto;min-height:300px}
+#score svg{max-width:100%}
+.example{font-size:12px;background:#f6f9ff;border-radius:8px;padding:8px 10px;color:var(--ink2);margin-top:8px}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>🎼 简谱编辑器（v1）</h1>
+  <a href="/#/collection">← 返回后台</a>
+</div>
+<div class="wrap">
+  <div class="grid">
+    <div class="card">
+      <h2>📝 输入简谱（所见即所得）</h2>
+      <textarea id="src" spellcheck="false">1=F 4/4  ♩=60
+| 5 6 1' 2' | 3' 2' 1' 6 | 5 - 3 5 | 1' - - 0 |
+| 5 6 1' 2' | 3' 2' 1' 6 | 5 3 2 1 | 1' - - 0 |
+L: 奇异恩典，何等甘甜
+L: 我罪已得赦免；</textarea>
+      <div class="mt8">
+        <button class="btn btn-primary" id="render">▶ 排版</button>
+        <button class="btn" id="dlSvg">下载 SVG</button>
+        <button class="btn" id="dlPng">下载 PNG</button>
+      </div>
+      <div class="hint mt12">
+        <b>语法（很简单）：</b><br>
+        音符 <b>1-7</b> · 休止 <b>0</b> · 高音点 <b>1'</b> · 低音点 <b>1,</b><br>
+        八分 <b>1_</b> · 十六分 <b>1__</b> · 二分 <b>1-</b> · 全音 <b>1---</b> · 附点 <b>1.</b><br>
+        小节线 <b>|</b> · 反复 <b>|:  :|</b> · 调号拍号 <b>1=F 4/4</b><br>
+        歌词行：以 <b>L:</b> 开头，字符逐个对齐音符
+      </div>
+      <div class="example">示例：<code>| 5 6 1' 2' | 3' 2' 1' 6 |</code> 表示一小节四拍（1 2 3 4=四分音符）</div>
+    </div>
+    <div class="card">
+      <h2>🖼 预览</h2>
+      <div id="score"></div>
+    </div>
+  </div>
+</div>
+<script>
+const $ = (s) => document.querySelector(s);
+const DUR = { "": 1, "_": 0.5, "__": 0.25, "-": 2, "--": 3, "---": 4 };
+const W = 26, H = 34, LY = 132, TOP = 46;
+
+function renderJianpu(text) {
+  const lines = text.split("\n").map((l) => l.trim()).filter((l) => l);
+  const lyricRows = [];
+  const music = [];
+  let key = "1=C", meter = "4/4", tempo = "";
+  for (const ln of lines) {
+    if (ln.startsWith("L:")) { lyricRows.push(ln.slice(2).trim()); continue; }
+    if (/^\d\s*[=＝]/.test(ln)) {
+      const m = ln.match(/^(\d)\s*[=＝]\s*([A-Ga-g][#b♯♭]?)\s*(\d\/\d)?\s*(.*)$/);
+      if (m) { key = m[2].toUpperCase(); if (m[3]) meter = m[3]; tempo = (m[4] || "").trim(); }
+      continue;
+    }
+    music.push(ln);
+  }
+  const tokens = [];
+  for (const ln of music) {
+    for (const t of ln.split(/\s+/)) {
+      if (t) tokens.push(t);
+    }
+  }
+  // 计算总宽度
+  let x = 40, maxX = 40, y = TOP, lineNum = 0, firstX = 40;
+  const notes = [];
+  const bars = [];
+  let bar = true;
+  function noteWidth(tok) {
+    let dur = "";
+    if (tok.endsWith("_")) { dur = "_"; if (tok.endsWith("__")) dur = "__"; }
+    else {
+      const m = tok.match(/-+$/);
+      if (m) dur = m[0];
+    }
+    return (DUR[dur] ?? 1) * W;
+  }
+  for (const tok of tokens) {
+    if (tok.startsWith("|") || tok.startsWith(":")) {
+      bars.push({ x: x, type: tok });
+      if (tok.startsWith("||") || tok.startsWith("|:")) x += 10;
+      else if (tok.startsWith(":|")) x += 14;
+      continue;
+    }
+    if (x > 1000) { x = firstX; y += H * 4 + 10; }
+    const base = tok.replace(/['",_\-.]/g, "");
+    const isNote = /^[0-7]$/.test(base);
+    const w = isNote ? noteWidth(tok) : W;
+    notes.push({ x: x, y: y, tok: tok, w: w, isNote: isNote });
+    x += w + 6;
+    maxX = Math.max(maxX, x);
+  }
+  maxX += 40;
+  const lyricHeight = lyricRows.length * 20;
+  const svgH = y + H * 4 + lyricHeight + 30;
+  const PAD = 20;
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${maxX + PAD * 2}" height="${svgH}" viewBox="0 0 ${maxX + PAD * 2} ${svgH}" style="background:#fff">`;
+  // 标题区：调号/拍号/速度
+  svg += `<text x="${PAD + 8}" y="24" font-size="13" font-weight="bold">${key}  ${meter}${tempo ? "  ♩=" + tempo : ""}</text>`;
+  svg += `<text x="${PAD + 8}" y="${y - 16}" font-size="12" fill="#888">《示例曲 · 奇异恩典》</text>`;
+  // 小节线
+  for (const b of bars) {
+    const bx = PAD + b.x;
+    svg += `<line x1="${bx}" y1="${y - 12}" x2="${bx}" y2="${y + H * 2.6}" stroke="#333" stroke-width="${b.type.includes("||") || b.type.includes(":") ? 1.6 : 1}"/>`;
+    if (b.type.startsWith("|:")) svg += `<text x="${bx - 4}" y="${y - 18}" font-size="12">𝄆</text>`;
+    if (b.type.startsWith(":|")) svg += `<text x="${bx - 10}" y="${y - 18}" font-size="12">𝄇</text>`;
+  }
+  // 音符
+  for (const n of notes) {
+    const nx = PAD + n.x, ny = n.y;
+    if (!n.isNote) { continue; }
+    const m = n.tok.match(/^([0-7])(['",]*)(_*)(-*)(\.?)$/);
+    if (!m) continue;
+    const digit = m[1], oct = m[2] || "", und = m[3] || "", ext = m[4] || "", dot = m[5];
+    const up = (oct.match(/'/g) || []).length;
+    const down = (oct.match(/,/g) || []).length;
+    const w = noteWidth(n.tok);
+    // 数字
+    svg += `<text x="${nx}" y="${ny}" font-size="22" font-family="Georgia,serif" text-anchor="middle">${digit}</text>`;
+    // 高/低音点
+    for (let i = 0; i < up; i++) svg += `<circle cx="${nx}" cy="${ny - 20 - i * 6}" r="2" fill="#000"/>`;
+    for (let i = 0; i < down; i++) svg += `<circle cx="${nx}" cy="${ny + 8 + i * 6}" r="2" fill="#000"/>`;
+    // 时值线（下划线）
+    if (und === "_") svg += `<line x1="${nx - w / 2}" y1="${ny + 10}" x2="${nx + w / 2}" y2="${ny + 10}" stroke="#000" stroke-width="1.5"/>`;
+    if (und === "__") {
+      svg += `<line x1="${nx - w / 2}" y1="${ny + 10}" x2="${nx + w / 2}" y2="${ny + 10}" stroke="#000" stroke-width="1.5"/>`;
+      svg += `<line x1="${nx - w / 2}" y1="${ny + 14}" x2="${nx + w / 2}" y2="${ny + 14}" stroke="#000" stroke-width="1.5"/>`;
+    }
+    // 延长线
+    if (ext) svg += `<line x1="${nx + 4}" y1="${ny}" x2="${nx + (DUR[ext] ?? 1) * W - 4}" y2="${ny}" stroke="#000" stroke-width="2"/>`;
+    // 附点
+    if (dot) svg += `<circle cx="${nx + w / 2 + 6}" cy="${ny}" r="2.5" fill="#000"/>`;
+  }
+  // 歌词
+  lyricRows.forEach((lr, ri) => {
+    const chars = Array.from(lr);
+    const noteXs = notes.filter((n) => n.isNote).map((n) => n.x);
+    const yl = y + H * 3 + 8 + ri * 20;
+    chars.forEach((c, ci) => {
+      if (c === " " || c === "，") { return; }
+      const nx = noteXs[Math.min(ci, noteXs.length - 1)] ?? 40;
+      svg += `<text x="${PAD + nx}" y="${yl}" font-size="13" text-anchor="middle">${c}</text>`;
+    });
+  });
+  svg += `</svg>`;
+  return svg;
+}
+
+function render() {
+  const svg = renderJianpu($("#src").value);
+  $("#score").innerHTML = svg;
+  return svg;
+}
+function svgToCanvas(svg) {
+  const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  return new Promise((res) => {
+    const img = new Image();
+    img.onload = () => {
+      const m = svg.match(/width="(\d+)" height="(\d+)"/);
+      const w = Number(m?.[1] || 800), h = Number(m?.[2] || 400);
+      const c = document.createElement("canvas"); c.width = w; c.height = h;
+      c.getContext("2d").drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      res(c);
+    };
+    img.src = url;
+  });
+}
+$("#render").addEventListener("click", render);
+$("#dlSvg").addEventListener("click", () => {
+  const blob = new Blob([render()], { type: "image/svg+xml" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "简谱.svg"; a.click();
+});
+$("#dlPng").addEventListener("click", async () => {
+  const c = await svgToCanvas(render());
+  const a = document.createElement("a"); a.href = c.toDataURL("image/png"); a.download = "简谱.png"; a.click();
+});
+render();
+</script>
+</body>
+</html>

@@ -710,6 +710,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._serve_file(STATIC / "index.html", "text/html; charset=utf-8")
             if path in ("/mobile", "/m", "/mobile.html"):
                 return self._serve_file(STATIC / "mobile.html", "text/html; charset=utf-8")
+            if path in ("/jianpu", "/score", "/简谱"):
+                return self._serve_file(STATIC / "jianpu.html", "text/html; charset=utf-8")
             if path in ("/qr", "/phone"):
                 return self._serve_file(STATIC / "qr.html", "text/html; charset=utf-8")
             if path.startswith("/static/"):
