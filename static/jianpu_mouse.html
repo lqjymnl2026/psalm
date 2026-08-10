@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>简谱快速打谱 · 鼠标排版</title>
+<style>
+:root{--ink:#1c2740;--ink2:#5b6b85;--primary:#4b6eaf;--gold:#c9a227;--line:#e3e8f0;--bg:#f2f5fa}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);}
+.top{background:linear-gradient(135deg,#1e2942,#3a5791);color:#fff;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+.top h1{font-size:17px}
+.top a{color:#ffd970;text-decoration:none;font-size:13px;background:rgba(255,255,255,.12);padding:5px 12px;border-radius:8px}
+.wrap{max-width:1240px;margin:0 auto;padding:14px}
+.toolbar{background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px 12px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:12px}
+.btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 11px;font-size:13px;cursor:pointer}
+.btn.on{background:var(--primary);color:#fff;border-color:var(--primary)}
+.btn-gold{background:var(--gold);color:#fff;border-color:var(--gold)}
+.btn-green{background:#2e9e6b;color:#fff;border-color:#2e9e6b}
+.btn:hover{opacity:.9}
+.tb-group{display:flex;gap:4px;align-items:center;border-right:1px solid var(--line);padding-right:10px;margin-right:2px}
+.tb-group:last-child{border-right:none}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px}
+#score{overflow:auto;min-height:380px}
+#score svg{max-width:100%}
+.hint{font-size:12px;color:var(--ink2);line-height:1.9}
+.hint b{color:var(--primary)}
+.meta{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px}
+.meta input{border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:12px;outline:none}
+.lyrics textarea{border:1px solid var(--line);border-radius:6px;padding:6px;font-size:12px;width:100%;min-height:40px;resize:vertical;outline:none}
+.sync{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+.sync textarea{border:1px solid var(--line);border-radius:6px;padding:8px;font-size:12px;font-family:ui-monospace,Menlo,monospace;min-height:80px;width:100%;outline:none}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>🎼 简谱快速打谱（鼠标 + 数字键）</h1>
+  <a href="/jianpu">← 文本编辑器</a>
+  <a href="/#/collection">返回后台</a>
+</div>
+<div class="wrap">
+  <div class="toolbar" id="tb">
+    <span class="tb-group"><b style="font-size:12px">时值</b>
+      <button class="btn" data-dur="4" title="全音符(---)">𝅝 全</button>
+      <button class="btn" data-dur="2" title="二分音符(-)">𝅗𝅥 二</button>
+      <button class="btn on" data-dur="1" title="四分音符">♩ 四</button>
+      <button class="btn" data-dur="0.5" title="八分音符(_)">♪ 八</button>
+      <button class="btn" data-dur="0.25" title="十六分音符(__)">♬ 十六</button>
+    </span>
+    <span class="tb-group"><b style="font-size:12px">记号</b>
+      <button class="btn" id="tbDot" title="附点(.)">附点</button>
+      <button class="btn" id="tbTie" title="连音线(~)">连音</button>
+      <button class="btn" id="tbRest" title="休止(0)">休止</button>
+      <button class="btn" id="tbOctU" title="高八度(')">+8</button>
+      <button class="btn" id="tbOctD" title="低八度(,)">-8</button>
+    </span>
+    <span class="tb-group">
+      <button class="btn" id="undo">↩ 撤销</button>
+      <button class="btn" id="clear">清空</button>
+      <button class="btn btn-green" id="play">🔊 试听</button>
+    </span>
+    <span class="tb-group">
+      <button class="btn" id="dlPng">PNG</button>
+      <button class="btn" id="dlSvg">SVG</button>
+      <button class="btn" id="dlPdf">🖨 PDF</button>
+    </span>
+    <span class="hint" style="margin-left:auto"><b>快捷键：</b>1-7 音高 · 0 休止 · Tab 切时值 · . 附点 · ' 高八度 · , 低八度 · Delete 删选中/上一个</span>
+  </div>
+
+  <div class="card">
+    <div class="meta">
+      <input id="mTitle" placeholder="歌名" value="奇异恩典">
+      <input id="mAuthor" placeholder="作词" value="John Newton">
+      <input id="mComposer" placeholder="作曲" value="NEW BRITAIN">
+      <input id="mKey" placeholder="1=F 4/4" value="1=F 4/4">
+    </div>
+    <div id="score"></div>
+    <div class="lyrics mt12">
+      <div class="hint" style="margin-bottom:4px">歌词（每行一段，字符逐个对齐音符）：</div>
+      <textarea id="lyrics">奇异恩典，何等甘甜
+我罪已得赦免；</textarea>
+    </div>
+  </div>
+
+  <div class="sync">
+    <div class="card">
+      <div class="hint" style="margin-bottom:4px">📄 当前简谱文本（可复制到文本编辑器，或粘贴导入）：</div>
+      <textarea id="txt" readonly></textarea>
+      <button class="btn mt8" id="fromTxt">⬇ 从文本导入到打谱</button>
+    </div>
+  </div>
+</div>
+<script>
+const $ = (s) => document.querySelector(s);
+const DUR_LABEL = { 4: "---", 2: "-", 1: "", 0.5: "_", 0.25: "__" };
+const state = { dur: 1, dot: false, tie: false, rest: false, oct: 0, notes: [], sel: -1, meter: [4, 4], pos: 0 };
+
+function addNote(pitch, dur, dot, oct, tie, type) {
+  const n = { pitch, dur, dot, oct, tie, type: type || "n" };
+  state.notes.splice(Math.min(state.pos, state.notes.length), 0, n);
+  state.pos = Math.min(state.pos + 1, state.notes.length);
+  state.sel = -1;
+  state.rest = false;
+  state.tie = false;
+  render();
+}
+function insertAt(i, n) { state.notes.splice(i, 0, n); state.sel = -1; render(); }
+
+function tokenText(n) {
+  if (n.type === "r") return "0";
+  let t = String(n.pitch);
+  for (let i = 0; i < Math.abs(n.oct); i++) t += n.oct > 0 ? "'" : ",";
+  t += DUR_LABEL[n.dur] || "";
+  if (n.dot) t += ".";
+  if (n.tie) t += "~";
+  return t;
+}
+function toText() {
+  const parts = [];
+  let beats = 0;
+  state.notes.forEach((n, i) => {
+    const isBar = i > 0 && beats >= state.meter[1];
+    if (isBar) { parts.push("|"); beats = 0; }
+    parts.push(tokenText(n));
+    beats += n.dur;
+    if (beats >= state.meter[1]) beats = state.meter[1];
+  });
+  return (state.meter[0] ? `${state.meter[0]}=${$("#mKey").value.match(/[A-Ga-g][#b♯♭]?/)?.[0] || "C"} ${state.meter[0]}/${state.meter[1]} ` : "") + "\n" + parts.join(" ");
+}
+
+function fromText(txt) {
+  state.notes = [];
+  const tokens = txt.split(/\s+/).filter(Boolean);
+  for (const t of tokens) {
+    if (t.startsWith("|") || t.startsWith(":")) continue;
+    if (t.startsWith("0")) { state.notes.push({ pitch: 0, dur: 1, dot: false, oct: 0, tie: false, type: "r" }); continue; }
+    const m = t.match(/^([1-7])(['',]*)(_*|-*)(\.?)(~?)$/);
+    if (!m) continue;
+    const oct = (m[2].match(/'/g) || []).length - (m[2].match(/,/g) || []).length;
+    let dur = 1;
+    if (m[3] === "__") dur = 0.25; else if (m[3] === "_") dur = 0.5;
+    else if (m[3]) dur = m[3].length + 1;
+    if (dur > 4) dur = 4;
+    state.notes.push({ pitch: Number(m[1]), dur, dot: !!m[4], oct, tie: !!m[5], type: "n" });
+  }
+  render();
+}
+
+function layout() {
+  const beatsPerBar = state.meter[1] || 4;
+  const W = 34, H = 40, TOP = 70, LEFT = 50, barW = beatsPerBar * W + 12, maxBars = 4;
+  const rows = [];
+  let row = { notes: [], beats: 0, bars: 0 };
+  let lastWasBar = false;
+  state.notes.forEach((n) => {
+    if (row.beats + n.dur > beatsPerBar + 0.001 && row.beats > 0 && !lastWasBar) {
+      row.bars++;
+      rows.push(row);
+      row = { notes: [], beats: 0, bars: 0 };
+    }
+    row.notes.push(n);
+    row.beats += n.dur;
+    lastWasBar = false;
+    if (row.beats >= beatsPerBar - 0.001) {
+      row.bars++;
+      rows.push(row);
+      row = { notes: [], beats: 0, bars: 0 };
+      lastWasBar = true;
+    }
+  });
+  if (row.notes.length) rows.push(row);
+  const lyricRows = $("#lyrics").value.split("\n").map(l => l.trim()).filter(l => l);
+  const lineH = H * 2.4 + (lyricRows.length ? lyricRows.length * 18 + 8 : 0);
+  const svgH = rows.length * lineH + TOP + 20;
+  const svgW = LEFT * 2 + maxBars * barW + 20;
+  return { rows, lyricRows, lineH, svgH, svgW, W, H, TOP, LEFT, barW, beatsPerBar };
+}
+
+function render() {
+  const L = layout();
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${L.svgW}" height="${L.svgH}" viewBox="0 0 ${L.svgW} ${L.svgH}" style="background:#fff">`;
+  const title = $("#mTitle").value.trim() || "未命名";
+  svg += `<text x="${L.svgW/2}" y="24" font-size="20" font-weight="bold" text-anchor="middle">${title}</text>`;
+  const sub = [$("#mAuthor").value.trim(), $("#mComposer").value.trim()].filter(Boolean).join(" · ");
+  if (sub) svg += `<text x="${L.svgW/2}" y="42" font-size="12" text-anchor="middle" fill="#555">${sub}</text>`;
+  svg += `<text x="20" y="20" font-size="12" fill="#777">${$("#mKey").value.trim()}</text>`;
+
+  let gi = 0;
+  const allNoteXs = [];
+  const PADX = (x) => x + 20;
+  const lyricRows = L.lyricRows;
+  for (let ri = 0; ri < L.rows.length; ri++) {
+    const row = L.rows[ri];
+    const ry = L.TOP + ri * L.lineH;
+    let x = L.LEFT;
+    let beats = 0;
+    for (const [i, n] of row.notes.entries()) {
+      const isBar = i > 0 && beats >= L.beatsPerBar - 0.001;
+      if (isBar) {
+        svg += `<line x1="${x}" y1="${ry}" x2="${x}" y2="${ry + L.H * 2}" stroke="#333" stroke-width="1"/>`;
+        x += 10; beats = 0;
+      }
+      const nx = x, ny = ry + L.H;
+      if (n.type === "r") {
+        svg += `<text x="${nx}" y="${ny}" font-size="18" text-anchor="middle" fill="#333">0</text>`;
+      } else {
+        svg += `<text x="${nx}" y="${ny}" font-size="24" font-family="Georgia,serif" text-anchor="middle" data-i="${gi}">${n.pitch}</text>`;
+        for (let k = 0; k < Math.abs(n.oct); k++) {
+          const cy = n.oct > 0 ? ny - 20 - k * 6 : ny + 8 + k * 6;
+          svg += `<circle cx="${nx}" cy="${cy}" r="2"/>`;
+        }
+        if (n.dot) svg += `<circle cx="${nx + n.dur * 17 + 8}" cy="${ny}" r="2.5"/>`;
+        if (n.tie) svg += `<path d="M ${nx+4} ${ny-4} Q ${nx+12} ${ny-14} ${nx+20} ${ny-4}" stroke="#000" fill="none" stroke-width="1.6"/>`;
+      }
+      // 时值线
+      if (n.dur <= 0.5) svg += `<line x1="${nx - 10}" y1="${ny + 11}" x2="${nx + 10}" y2="${ny + 11}" stroke="#000" stroke-width="1.5"/>`;
+      if (n.dur <= 0.25) svg += `<line x1="${nx - 10}" y1="${ny + 15}" x2="${nx + 10}" y2="${ny + 15}" stroke="#000" stroke-width="1.5"/>`;
+      if (n.dur >= 2) svg += `<line x1="${nx + 6}" y1="${ny}" x2="${nx + n.dur * 17 - 6}" y2="${ny}" stroke="#000" stroke-width="2"/>`;
+      allNoteXs.push(nx);
+      x += n.dur * 17 + 8;
+      beats += n.dur;
+      gi++;
+    }
+    // 行尾小节线
+    svg += `<line x1="${x}" y1="${ry}" x2="${x}" y2="${ry + L.H * 2}" stroke="#333" stroke-width="1.6"/>`;
+    // 歌词：每段从第1个音符开始独立对齐（多段同旋律）
+    lyricRows.forEach((lr, lri) => {
+      const chars = Array.from(lr);
+      chars.forEach((c, ci) => {
+        if (c === " " || c === "，") return;
+        const nx = allNoteXs[Math.min(ci, allNoteXs.length - 1)] ?? L.LEFT;
+        svg += `<text x="${nx}" y="${ry + L.H * 2 + 16 + lri * 18}" font-size="13" text-anchor="middle">${c}</text>`;
+      });
+    });
+  }
+  // 光标标记（在插入位置画一条线）
+  const cursorX = state.pos < allNoteXs.length ? allNoteXs[state.pos] : (allNoteXs.length ? allNoteXs[allNoteXs.length - 1] + 20 : L.LEFT);
+  svg += `<line x1="${PADX(cursorX)}" y1="${L.TOP - 6}" x2="${PADX(cursorX)}" y2="${L.TOP + L.H * 2 + (lyricRows.length ? lyricRows.length * 18 : 10)}" stroke="#c9a227" stroke-width="2" stroke-dasharray="3,3"/>`;
+  svg += `</svg>`;
+  $("#score").innerHTML = svg;
+  $("#txt").value = toText();
+}
+
+// 键盘输入：1-7 音高 + 26 键快捷（时值/记号/编辑）
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+  const k = e.key.toLowerCase();
+  if (/^[1-7]$/.test(k)) {
+    if (state.rest) { state.rest = false; }
+    addNote(Number(k), state.dur, state.dot, state.oct, state.tie, "n");
+    state.dot = false; e.preventDefault();
+  } else if (k === "0") { addNote(0, state.dur, false, 0, false, "r"); e.preventDefault(); }
+  else if (k === "q") { state.dur = 1; updateDurUI(); e.preventDefault(); }
+  else if (k === "e") { state.dur = 0.5; updateDurUI(); e.preventDefault(); }
+  else if (k === "s") { state.dur = 0.25; updateDurUI(); e.preventDefault(); }
+  else if (k === "w") { state.dur = 4; updateDurUI(); e.preventDefault(); }
+  else if (k === "h") { state.dur = 2; updateDurUI(); e.preventDefault(); }
+  else if (k === "x") { state.dur = 0.125; updateDurUI(); e.preventDefault(); }
+  else if (k === "d") { state.dot = !state.dot; $("#tbDot").classList.toggle("on", state.dot); e.preventDefault(); }
+  else if (k === "t") { state.tie = !state.tie; $("#tbTie").classList.toggle("on", state.tie); e.preventDefault(); }
+  else if (k === "r") { addNote(0, state.dur, false, 0, false, "r"); e.preventDefault(); }
+  else if (k === "u") { state.oct = 1; $("#tbOctU").classList.add("on"); $("#tbOctD").classList.remove("on"); e.preventDefault(); }
+  else if (k === "l") { state.oct = -1; $("#tbOctD").classList.add("on"); $("#tbOctU").classList.remove("on"); e.preventDefault(); }
+  else if (k === "a") { state.pos = Math.max(0, state.pos - 1); render(); e.preventDefault(); }
+  else if (k === "f") { state.pos = Math.min(state.notes.length, state.pos + 1); render(); e.preventDefault(); }
+  else if (k === "z") { if (state.notes.length) { state.notes.splice(state.pos > 0 ? state.pos - 1 : 0, 1); if (state.pos > 0) state.pos--; render(); } e.preventDefault(); }
+  else if (k === "p") { play(); e.preventDefault(); }
+  else if (k === "o") { transpose(1); e.preventDefault(); }
+  else if (k === "i") { transpose(-1); e.preventDefault(); }
+  else if (k === ".") { state.dot = !state.dot; $("#tbDot").classList.toggle("on", state.dot); e.preventDefault(); }
+  else if (k === "'") { state.oct = 1; $("#tbOctU").classList.add("on"); $("#tbOctD").classList.remove("on"); e.preventDefault(); }
+  else if (k === ",") { state.oct = -1; $("#tbOctD").classList.add("on"); $("#tbOctU").classList.remove("on"); e.preventDefault(); }
+  else if (k === " ") { state.pos = Math.min(state.notes.length, state.pos + 1); render(); e.preventDefault(); }
+  else if (k === "backspace") { if (state.notes.length) { state.notes.splice(state.pos > 0 ? state.pos - 1 : 0, 1); if (state.pos > 0) state.pos--; render(); } e.preventDefault(); }
+  else if (k === "delete") { if (state.notes.length && state.pos < state.notes.length) { state.notes.splice(state.pos, 1); render(); } e.preventDefault(); }
+  else if (k === "tab") {
+    const durs = [1, 0.5, 0.25, 2, 4];
+    state.dur = durs[(durs.indexOf(state.dur) + 1) % durs.length];
+    updateDurUI(); e.preventDefault();
+  }
+});
+
+function transpose(delta) {
+  state.notes.forEach(n => { if (n.type === "n") { let p = n.pitch + delta; if (p > 7) p -= 7; if (p < 1) p += 7; n.pitch = p; } });
+  render();
+}
+function updateDurUI() {
+  document.querySelectorAll("[data-dur]").forEach(b => b.classList.toggle("on", Number(b.dataset.dur) === state.dur));
+}
+
+// 工具栏
+document.querySelectorAll("[data-dur]").forEach(b => b.addEventListener("click", () => { state.dur = Number(b.dataset.dur); updateDurUI(); }));
+$("#tbDot").addEventListener("click", () => { state.dot = !state.dot; $("#tbDot").classList.toggle("on", state.dot); });
+$("#tbTie").addEventListener("click", () => { state.tie = !state.tie; $("#tbTie").classList.toggle("on", state.tie); });
+$("#tbOctU").addEventListener("click", () => { state.oct = 1; $("#tbOctU").classList.add("on"); $("#tbOctD").classList.remove("on"); });
+$("#tbOctD").addEventListener("click", () => { state.oct = -1; $("#tbOctD").classList.add("on"); $("#tbOctU").classList.remove("on"); });
+$("#tbRest").addEventListener("click", () => { addNote(0, state.dur, false, 0, false, "r"); });
+$("#undo").addEventListener("click", () => { if (state.notes.length) { state.notes.pop(); render(); } });
+$("#clear").addEventListener("click", () => { state.notes = []; render(); });
+$("#lyrics").addEventListener("input", render);
+$("#mTitle").addEventListener("input", render);
+$("#mAuthor").addEventListener("input", render);
+$("#mComposer").addEventListener("input", render);
+$("#fromTxt").addEventListener("click", () => fromText($("#txt").value));
+
+// 鼠标：点击谱面选择音符、右键删除
+$("#score").addEventListener("click", (e) => {
+  const t = e.target;
+  if (t.tagName === "text" && t.dataset.i !== undefined) { state.sel = Number(t.dataset.i); }
+});
+$("#score").addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  const t = e.target;
+  if (t.tagName === "text" && t.dataset.i !== undefined) {
+    state.notes.splice(Number(t.dataset.i), 1);
+    render();
+  }
+});
+
+// MIDI 试听
+let ac = null;
+function play() {
+  const f = { 1: 523.25, 2: 587.33, 3: 659.25, 4: 698.46, 5: 783.99, 6: 880, 7: 987.77 };
+  if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+  let t = ac.currentTime + 0.1;
+  state.notes.forEach(n => {
+    if (n.type === "r") { t += n.dur * 0.5; return; }
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.value = f[n.pitch] * Math.pow(2, n.oct);
+    o.connect(g); g.connect(ac.destination);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.2, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + n.dur * 0.5);
+    o.start(t); o.stop(t + n.dur * 0.5 + 0.05);
+    t += n.dur * 0.5;
+  });
+}
+$("#play").addEventListener("click", play);
+
+function svgToCanvas(svg) {
+  const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+  return new Promise((res) => {
+    const img = new Image();
+    img.onload = () => {
+      const m = svg.match(/width="(\d+)" height="(\d+)"/);
+      const w = Number(m?.[1] || 800), h = Number(m?.[2] || 400);
+      const c = document.createElement("canvas"); c.width = w; c.height = h;
+      c.getContext("2d").drawImage(img, 0, 0, w, h); URL.revokeObjectURL(url); res(c);
+    };
+    img.src = url;
+  });
+}
+function currentSvg() { return $("#score").querySelector("svg").outerHTML; }
+$("#dlSvg").addEventListener("click", () => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([currentSvg()], { type: "image/svg+xml" })); a.download = "简谱.svg"; a.click(); });
+$("#dlPng").addEventListener("click", async () => { const c = await svgToCanvas(currentSvg()); const a = document.createElement("a"); a.href = c.toDataURL("image/png"); a.download = "简谱.png"; a.click(); });
+$("#dlPdf").addEventListener("click", () => {
+  const win = window.open("", "_blank");
+  win.document.write(`<html><head><title>简谱</title><style>@page{size:A4;margin:15mm}body{font-family:'PingFang SC','Microsoft YaHei';margin:0}svg{width:100%;height:auto}</style></head><body>${currentSvg()}</body></html>`);
+  win.document.close(); setTimeout(() => win.print(), 400);
+});
+
+// 示例谱
+fromText("| 5 6 1' 2' | 3' 2' 1' 6 | 5 - 3 5 | 1' - - 0 |");
+render();
+</script>
+</body>
+</html>

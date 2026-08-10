@@ -229,7 +229,8 @@ async function renderDashboard() {
       <div class="flex flex-wrap">
         <button class="btn btn-primary" data-goto="collection">📥 批量导入</button>
         <button class="btn btn-gold" id="dashMobile">📱 手机快捷收集</button>
-        <button class="btn" id="dashJianpu">🎼 简谱编辑器</button>
+        <button class="btn" id="dashJianpu">🎼 简谱打谱（鼠标）</button>
+        <button class="btn" id="dashJianpuTxt">📝 文本编辑器</button>
         <button class="btn" data-goto="organize">🧠 一键智能整理</button>
         <button class="btn" data-goto="review">✅ 去审核</button>
         <button class="btn btn-gold" data-goto="export">📤 导出中心</button>
@@ -245,7 +246,9 @@ function bindGoto() {
   const dm = $("#dashMobile");
   if (dm) dm.addEventListener("click", () => { location.href = "/mobile"; });
   const dj = $("#dashJianpu");
-  if (dj) dj.addEventListener("click", () => { location.href = "/jianpu"; });
+  if (dj) dj.addEventListener("click", () => { location.href = "/jianpu_edit"; });
+  const djt = $("#dashJianpuTxt");
+  if (djt) djt.addEventListener("click", () => { location.href = "/jianpu"; });
 }
 
 function updatePills(d) {
