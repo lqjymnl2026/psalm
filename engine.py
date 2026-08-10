@@ -111,8 +111,29 @@ def _count_hits(text: str, kws) -> int:
     return n
 
 
-def classify(song: dict) -> dict:
-    """返回 themes / scenarios / musicTypes / difficulty / singability / confidence / needsReview"""
+def classify_category(song: dict, categories: dict):
+    """按「编定圣诗分类」配置计算 (大类, 细类)。categories: {大类: {细类:[关键词], "大类词":[关键词]}}"""
+    if not categories:
+        return "", ""
+    blob = " ".join([song.get("title", ""), song.get("firstLine", ""), song.get("lyrics", ""),
+                     song.get("lyricist", ""), song.get("composer", ""), song.get("source", ""), song.get("tune", "")])
+    title = song.get("title", "") or ""
+    best = ("", "", 0.0)
+    for cat, items in categories.items():
+        cat_hits = _count_hits(blob, items.get("大类词") or []) * 0.6
+        for sub, kws in items.items():
+            if sub == "大类词":
+                continue
+            hits = _count_hits(blob, kws) + 1.5 * _count_hits(title, kws)
+            score = hits + cat_hits
+            if score > best[2]:
+                best = (cat, sub, score)
+    return best[0], best[1]
+
+
+def classify(song: dict, categories=None) -> dict:
+    """返回 themes / scenarios / musicTypes / difficulty / singability / confidence / needsReview / category / subcategory"""
+    category, subcategory = classify_category(song, categories) if categories else ("", "")
     title = song.get("title") or ""
     first = song.get("firstLine") or ""
     lyrics = song.get("lyrics") or ""
@@ -194,6 +215,8 @@ def classify(song: dict) -> dict:
         "singabilityStars": "★" * sing + "☆" * (5 - sing),
         "confidence": round(confidence, 2),
         "needsReview": bool(needs_review),
+        "category": category,
+        "subcategory": subcategory,
     }
 
 

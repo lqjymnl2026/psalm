@@ -174,10 +174,18 @@ async function renderDashboard() {
       <div class="stat-card ${c.c}"><div class="num">${c.n}</div><div class="label">${c.label}</div><div class="foot">${c.foot}</div></div>`).join("")}
     </div>
     <div class="grid-3-2 section">
+      ${d.categories && d.categories.hymnbook ? `
+      <div class="card card-pad">
+        <div class="card-title">圣诗分类（大类） <span class="sub">编定分类</span></div>
+        ${renderBars((st.categories || []).slice(0, 8), "gold")}
+        <div class="card-title mt16">细类分布 <span class="sub">Top 8</span></div>
+        ${renderBars((st.subcategories || []).slice(0, 8), "green")}
+      </div>` : `
       <div class="card card-pad">
         <div class="card-title">圣经主题分布 <span class="sub">Top 10</span></div>
         ${renderBars(st.themes.slice(0, 10))}
-      </div>
+      </div>`}
+      <div class="card card-pad">
       <div class="card card-pad">
         <div class="card-title">音乐类型</div>
         ${renderBars(st.types.slice(0, 8), "gold")}
@@ -576,6 +584,9 @@ function filterOptionsHTML(selected = "") {
   const c = state.cats;
   const opt = (list) => list.map((x) => `<option value="${esc(x)}" ${x === selected ? "selected" : ""}>${esc(x)}</option>`).join("");
   return `
+    ${c.hymnbook ? `
+    <select id="flt_category" title="大类"><option value="">大类：全部</option>${Object.keys(c.hymnbook).map((x) => `<option value="${esc(x)}">${esc(x)}</option>`).join("")}</select>
+    <select id="flt_subcategory" title="细类"><option value="">细类：全部</option>${Object.entries(c.hymnbook).flatMap(([k, v]) => Object.keys(v).filter((x) => x !== "大类词").map((x) => `<option value="${esc(x)}">${esc(x)}</option>`)).join("")}</select>` : ""}
     <select id="flt_theme" title="圣经主题"><option value="">主题：全部</option>${opt(c.themes)}</select>
     <select id="flt_scenario" title="崇拜场景"><option value="">场景：全部</option>${opt(c.scenarios)}</select>
     <select id="flt_type" title="音乐类型"><option value="">类型：全部</option>${opt(c.types)}</select>
@@ -591,6 +602,7 @@ function readFilters() {
     q: ($("#libSearch") || {}).value || "", theme: $("#flt_theme")?.value || "", scenario: $("#flt_scenario")?.value || "",
     type: $("#flt_type")?.value || "", status: $("#flt_status")?.value || "", rating: $("#flt_rating")?.value || 0,
     sort: $("#flt_sort")?.value || "number", needsReview: $("#flt_review")?.checked || false, dup: $("#flt_dup")?.checked || false,
+    category: $("#flt_category")?.value || "", subcategory: $("#flt_subcategory")?.value || "",
   };
 }
 
@@ -640,7 +652,7 @@ async function loadLibrary() {
             <td class="song-title">${esc(s.title || "(未命名)")}${flagsHtml(s)}${s.title ? "" : ""}</td>
             <td class="muted">${esc(short(s.firstLine, 24))}</td>
             <td class="muted small">${esc(short(s.lyricist, 14))}${s.composer ? "<br>" + esc(short(s.composer, 14)) : ""}</td>
-            <td>${chips((s.themes || []).slice(0, 2))}</td>
+            <td>${s.category ? `<span class="chip gold">${esc(s.category)}·${esc(s.subcategory || "")}</span>` : chips((s.themes || []).slice(0, 2))}</td>
             <td class="small">${esc(s.difficultyStars || "")}</td>
             <td>${s.rating ? s.rating.toFixed(1) : "—"}</td>
             <td>${statusChip(s)}</td>
@@ -747,6 +759,7 @@ function reviewCard(s) {
         <div class="muted small">${esc(s.number || "")}</div>
       </div>
       <div class="rc-meta">${esc(s.lyricist || "")}${s.composer ? " · " + esc(s.composer) : ""}</div>
+      ${s.category ? `<div><span class="chip gold">${esc(s.category)}·${esc(s.subcategory || "")}</span></div>` : ""}
       <div>${chips((s.themes || []).slice(0, 3))}${chips((s.scenarios || []).slice(0, 2), "gold")}</div>
       <div class="flex small muted">难度 ${esc(s.difficultyStars || "")} · 会众适唱 ${esc(s.singabilityStars || "")} · AI 置信 ${Math.round((s.aiConfidence || 0) * 100)}%</div>
       ${flagsHtml(s) ? `<div>${flagsHtml(s)}</div>` : ""}
@@ -948,6 +961,9 @@ async function openSongModal(id) {
       <div class="form-group"><label>格律</label><input id="m_meter" value="${esc(s.meter)}"></div>
       <div class="form-group"><label>来源</label><input id="m_source" value="${esc(s.source)}"></div>
       <div class="form-group"><label>评分</label><input id="m_rating" type="number" min="0" max="5" step="0.1" value="${s.rating || ""}"></div>
+      ${state.cats.hymnbook ? `
+      <div class="form-group"><label>大类</label><select id="m_category"><option value="">（自动分类）</option>${Object.keys(state.cats.hymnbook).map((x) => `<option value="${esc(x)}" ${s.category === x ? "selected" : ""}>${esc(x)}</option>`).join("")}</select></div>
+      <div class="form-group"><label>细类</label><select id="m_subcategory"><option value="">（自动分类）</option>${Object.values(state.cats.hymnbook).flatMap((v) => Object.keys(v).filter((x) => x !== "大类词")).map((x) => `<option value="${esc(x)}" ${s.subcategory === x ? "selected" : ""}>${esc(x)}</option>`).join("")}</select></div>` : ""}
       <div class="form-group full"><label>歌词</label><textarea id="m_lyrics" rows="5">${esc(s.lyrics)}</textarea></div>
       <div class="form-group full"><label>圣经主题</label>${chipSelectHTML("m_theme", state.cats.themes, s.themes || [])}</div>
       <div class="form-group full"><label>崇拜场景</label>${chipSelectHTML("m_scenario", state.cats.scenarios, s.scenarios || [])}</div>
@@ -979,6 +995,7 @@ async function saveSongModal() {
     meter: $("#m_meter").value.trim(), source: $("#m_source").value.trim(), comment: $("#m_comment").value.trim(),
     lyrics: $("#m_lyrics").value, rating: Number($("#m_rating").value || 0),
     themes: chipSelectValue("m_theme"), scenarios: chipSelectValue("m_scenario"), musicTypes: chipSelectValue("m_type"),
+    category: $("#m_category")?.value || "", subcategory: $("#m_subcategory")?.value || "",
     reclassify: true,
   };
   const d = await api("/api/songs/" + editingId, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });

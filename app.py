@@ -28,6 +28,14 @@ DB_PATH = DATA / "db.json"
 for d in (DATA, UPLOADS, EXPORTS, SAMPLES):
     d.mkdir(parents=True, exist_ok=True)
 
+CATEGORIES = None
+_cat_path = DATA / "categories.json"
+if _cat_path.exists():
+    try:
+        CATEGORIES = json.loads(_cat_path.read_text("utf-8"))
+    except Exception:
+        CATEGORIES = None
+
 PORT = int(os.environ.get("PORT", "8787"))
 HOST = os.environ.get("HOST", "127.0.0.1")
 sys.path.insert(0, str(ROOT))
@@ -117,6 +125,7 @@ def default_song(**kw):
         "id": "", "number": "", "title": "", "firstLine": "", "lyricist": "", "composer": "",
         "translator": "", "tune": "", "key": "", "meter": "", "source": "", "comment": "",
         "lyrics": "", "themes": [], "scenarios": [], "musicTypes": [],
+        "category": "", "subcategory": "",
         "difficulty": 3, "difficultyStars": "★★★☆☆", "singability": 3, "singabilityStars": "★★★☆☆",
         "rating": 0, "status": "pending", "needsReview": False, "aiConfidence": 0,
         "flags": [], "dupGroup": None, "dupMatches": [], "dupResolved": False,
@@ -128,7 +137,7 @@ def default_song(**kw):
 
 
 def classify_song(song):
-    res = engine.classify(song)
+    res = engine.classify(song, CATEGORIES)
     song.update({k: v for k, v in res.items() if k != "needsReview"})
     song["needsReview"] = bool(res["needsReview"] or song.get("needsReview"))
     return res
@@ -356,6 +365,7 @@ def compute_stats(store):
     for s in songs:
         status_counts[s.get("status", "pending")] = status_counts.get(s.get("status", "pending"), 0) + 1
     theme_counts, scen_counts, type_counts = {}, {}, {}
+    cat_counts, sub_counts = {}, {}
     for s in songs:
         for t in s.get("themes") or []:
             theme_counts[t] = theme_counts.get(t, 0) + 1
@@ -363,6 +373,10 @@ def compute_stats(store):
             scen_counts[t] = scen_counts.get(t, 0) + 1
         for t in s.get("musicTypes") or []:
             type_counts[t] = type_counts.get(t, 0) + 1
+        if s.get("category"):
+            cat_counts[s["category"]] = cat_counts.get(s["category"], 0) + 1
+        if s.get("subcategory"):
+            sub_counts[s["subcategory"]] = sub_counts.get(s["subcategory"], 0) + 1
     dup_groups = len({s["dupGroup"] for s in songs if s.get("dupGroup")})
     rated = [s.get("rating") for s in songs if s.get("rating")]
     return {
@@ -378,12 +392,14 @@ def compute_stats(store):
         "scenarios": sorted(scen_counts.items(), key=lambda x: -x[1])[:10],
         "types": sorted(type_counts.items(), key=lambda x: -x[1])[:10],
         "imports": store.data.get("imports", [])[:8],
+        "categories": sorted(cat_counts.items(), key=lambda x: -x[1]),
+        "subcategories": sorted(sub_counts.items(), key=lambda x: -x[1])[:10],
     }
 
 
 # ---------------------------------------------------------------- 筛选
 def apply_filters(songs, q="", theme="", scenario="", mtype="", status="", rating=0,
-                  source="", needs_review=False, dup=False, statuses=None):
+                  source="", needs_review=False, dup=False, statuses=None, category="", subcategory=""):
     res = [s for s in songs if s.get("status") != "merged"]
     if q:
         ql = q.strip().lower()
@@ -392,6 +408,10 @@ def apply_filters(songs, q="", theme="", scenario="", mtype="", status="", ratin
                or ql in (s.get("lyricist") or "").lower()
                or ql in (s.get("composer") or "").lower()
                or ql in (s.get("tune") or "").lower()]
+    if category:
+        res = [s for s in res if s.get("category") == category]
+    if subcategory:
+        res = [s for s in res if s.get("subcategory") == subcategory]
     if theme:
         res = [s for s in res if theme in (s.get("themes") or [])]
     if scenario:
@@ -601,7 +621,8 @@ class Handler(BaseHTTPRequestHandler):
                 st = compute_stats(store)
                 return self._json({"stats": st, "categories": {
                     "themes": list(engine.THEMES.keys()), "scenarios": list(engine.SCENARIOS.keys()),
-                    "types": list(engine.MUSIC_TYPES.keys()), "statuses": STATUS_LABELS},
+                    "types": list(engine.MUSIC_TYPES.keys()), "statuses": STATUS_LABELS,
+                    "hymnbook": CATEGORIES},
                     "settings": {**store.data.get("settings", {}), "openaiKey": mask_key(store.data.get("settings", {}).get("openaiKey", ""))},
                     "samples": [f"/files/samples/{p}" for p in sorted(os.listdir(SAMPLES)) if not p.startswith(".")],
                     "ocrAvailable": parsers.ocr_available(),
@@ -645,6 +666,7 @@ class Handler(BaseHTTPRequestHandler):
             status=gv("status"), rating=gv("rating", 0), source=gv("source"),
             needs_review=gv("needsReview", "0") == "1", dup=gv("dup", "0") == "1",
             statuses=(gv("statuses", "").split(",") if gv("statuses", "") else None),
+            category=gv("category"), subcategory=gv("subcategory"),
         )
         songs = sort_songs(songs, gv("sort", "number"))
         def _int(v, d):
@@ -801,6 +823,10 @@ class Handler(BaseHTTPRequestHandler):
             for k in ("themes", "scenarios", "musicTypes"):
                 if k in body:
                     s[k] = body[k] or []
+            if body.get("category") is not None:
+                s["category"] = body.get("category") or ""
+            if body.get("subcategory") is not None:
+                s["subcategory"] = body.get("subcategory") or ""
             if "needsReview" in body:
                 s["needsReview"] = bool(body["needsReview"])
             if body.get("reclassify", True):
