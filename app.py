@@ -3,6 +3,7 @@
 """赞美诗资料智能整理中心 · 本地服务（零依赖，离线可用）"""
 from __future__ import annotations
 
+import io
 import json
 import mimetypes
 import os
@@ -304,8 +305,15 @@ def handle_import(store, files, uploader=""):
             created.append(s)
 
     for s in created:
-        s["uploader"] = (uploader or "").strip()
+        if not s.get("uploader"):
+            s["uploader"] = (uploader or "").strip()
+        explicit_cat = s.get("category") or ""
+        explicit_sub = s.get("subcategory") or ""
         classify_song(s)
+        if explicit_cat:
+            s["category"] = explicit_cat
+        if explicit_sub:
+            s["subcategory"] = explicit_sub
         song_flags(s)
     store.songs().extend(created)
     groups = apply_dedup(store)
@@ -501,6 +509,38 @@ def sort_songs(songs, sort="number"):
     return sorted(songs, key=num_key)
 
 
+def build_import_template():
+    """生成导入模板（按采集端字段：上传人/歌名/首句/歌词/作者/作曲/曲调/来源/备注/大类/细类）"""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "导入模板"
+    headers = ["上传人", "歌名", "首句", "歌词", "作者", "作曲", "曲调", "来源", "备注", "大类", "细类"]
+    ws.append(headers)
+    for c in range(1, len(headers) + 1):
+        cell = ws.cell(row=1, column=c)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="4B6EAF")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+    rows = [
+        ["张三", "奇异恩典", "奇异恩典，何等甘甜", "奇异恩典，何等甘甜，我罪已得赦免；\n前我失丧，今被寻回，瞎眼今得看见。", "John Newton", "NEW BRITAIN", "NEW BRITAIN", "老赞美诗集", "示例：上传人必填，其余可留空", "", ""],
+        ["李四", "平安夜", "平安夜，圣善夜", "平安夜，圣善夜，万暗中，光华射；\n照着圣母也照着圣婴，静享天赐安眠。", "Joseph Mohr", "Franz Gruber", "STILLE NACHT", "圣诞诗辑", "示例：大类/细类留空会自动分类", "救主耶稣", "降生"],
+    ]
+    for r in rows:
+        ws.append(r)
+    widths = [10, 16, 22, 40, 14, 14, 14, 14, 24, 10, 10]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[chr(64 + i)].width = w
+    for row in ws.iter_rows(min_row=2):
+        for cell in row:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+    ws.freeze_panes = "A2"
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 # ---------------------------------------------------------------- 导出
 def build_export(store, req):
     scope = req.get("scope", "all")
@@ -694,7 +734,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/songs":
                 return self._list_songs(qs)
             if path == "/api/songs/template":
-                return self._serve_file(SAMPLES / "导入模板.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                return self._send(200, build_import_template(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             if path == "/api/imports":
                 return self._json({"imports": store.data.get("imports", [])})
             if path == "/api/duplicates":
@@ -702,6 +742,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"groups": groups})
             if path == "/api/exports":
                 return self._json({"exports": store.data.get("exports", [])})
+            if path == "/api/auth/check":
+                return self._json({"ok": True, "authed": _check_auth(self.headers, qs)})
             m = re.fullmatch(r"/api/songs/([^/]+)", path)
             if m:
                 s = store.find(m.group(1))
@@ -755,8 +797,6 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(json.dumps({"ok": True, "token": token}, ensure_ascii=False).encode("utf-8"))
                     return
                 return self._json({"ok": False, "msg": "密码错误"}, 401)
-            if path == "/api/auth/check":
-                return self._json({"ok": True, "authed": _check_auth(self.headers, qs)})
             if path == "/api/password":
                 body = self._json_body()
                 if not _check_password(body.get("old", "")):

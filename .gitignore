@@ -13,3 +13,5 @@ tools/ocr_tool
 tools/.cache/
 
 .ghconfig/
+
+data/admin.json

@@ -281,10 +281,10 @@ async function renderCollection() {
       <div id="importProgress" class="mt12" hidden><span class="spin"></span>正在导入并智能整理，请稍候…</div>
       <div id="importResult" class="mt12"></div>
       <div class="mt12 flex flex-wrap small muted">
-        <a class="btn btn-sm" href="/api/songs/template" download>📄 下载导入模板</a>
+        <a class="btn btn-sm" href="/api/songs/template" download="赞美诗导入模板.xlsx">📄 下载导入模板</a>
         <a class="btn btn-sm" href="/files/samples/赞美诗导入示例.xlsx" download>示例 Excel</a>
         <a class="btn btn-sm" href="/files/samples/赞美诗集示例.pdf" download>示例 PDF</a>
-        <span>提示：模板第一行为表头；Excel 列名与模板不同也没关系，系统会自动匹配。</span>
+        <span>提示：模板含「上传人 / 歌名 / 首句 / 歌词 / 作者 / 作曲 / 曲调 / 来源 / 备注 / 大类 / 细类」；上传人建议必填（用于对接），大类/细类留空会自动分类。</span>
       </div>
     </div>
 

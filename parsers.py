@@ -34,6 +34,9 @@ COLUMN_ALIASES = {
     "number":     ["编号", "序号", "number", "曲号", "诗编号"],
     "comment":    ["备注", "说明", "comment", "注释"],
     "difficulty": ["难度", "difficulty"],
+    "uploader":   ["上传人", "上传人姓名", "收集人", "姓名", "uploader", "上报人"],
+    "category":   ["大类", "category", "分类一", "圣诗分类"],
+    "subcategory": ["细类", "subcategory", "分类二", "细目"],
 }
 
 _HEADER_CACHE = {}
