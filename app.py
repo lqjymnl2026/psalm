@@ -52,6 +52,11 @@ def _admin_enabled():
     return bool(ADMIN and ADMIN.get("hash"))
 
 
+def _admin_token():
+    import hashlib
+    return hashlib.sha256(("hymn-admin-token:" + (ADMIN.get("hash") or "")).encode("utf-8")).hexdigest()[:32]
+
+
 def _check_password(pwd):
     if not _admin_enabled():
         return True
@@ -70,6 +75,8 @@ def _check_auth(headers, qs=None):
         ck = headers.get("Cookie") or ""
         m = re.search(r"hymn_admin=([^;]+)", ck)
         token = m.group(1) if m else ""
+    if token == _admin_token():
+        return True
     return token in _ADMIN_TOKENS and _ADMIN_TOKENS[token] > time.time()
 
 
@@ -788,8 +795,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/login":
                 body = self._json_body()
                 if _check_password(body.get("password", "")):
-                    token = secrets.token_hex(16)
-                    _ADMIN_TOKENS[token] = time.time() + 7 * 86400
+                    token = _admin_token()
+                    _ADMIN_TOKENS[token] = time.time() + 30 * 86400
                     self.send_response(200)
                     self.send_header("Set-Cookie", f"hymn_admin={token}; Path=/; HttpOnly; Max-Age=604800")
                     self.send_header("Content-Type", "application/json; charset=utf-8")

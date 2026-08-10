@@ -227,6 +227,8 @@ async function renderDashboard() {
 
 function bindGoto() {
   document.querySelectorAll("[data-goto]").forEach((b) => b.addEventListener("click", () => { location.hash = "#/" + b.dataset.goto; }));
+  const dm = $("#dashMobile");
+  if (dm) dm.addEventListener("click", () => { location.href = "/mobile"; });
 }
 
 function updatePills(d) {
@@ -342,7 +344,6 @@ async function renderCollection() {
   fi.addEventListener("change", () => { if (fi.files.length) uploadFiles(fi.files); fi.value = ""; });
 
   $("#btnMobileCollect").addEventListener("click", () => { location.href = "/mobile"; });
-  $("#dashMobile").addEventListener("click", () => { location.href = "/mobile"; });
   $("#btnCamera").addEventListener("click", () => $("#cameraInput").click());
   $("#btnGallery").addEventListener("click", () => $("#galleryInput").click());
   $("#btnOcrFill").addEventListener("click", () => $("#cameraInput").click());

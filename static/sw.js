@@ -1,5 +1,5 @@
 /* 赞美诗中心 · Service Worker（离线壳缓存；API 不缓存） */
-const CACHE = "hymn-center-v1";
+const CACHE = "hymn-center-v2";
 const ASSETS = [
   "/", "/index.html", "/static/app.js", "/static/styles.css",
   "/static/manifest.webmanifest",
@@ -15,12 +15,13 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.pathname.startsWith("/api/") || url.pathname.startsWith("/files/")) return;
   e.respondWith(
-    caches.match(e.request).then((hit) => hit || fetch(e.request).then((res) => {
+    // 网络优先：始终拿最新代码；断网时回退缓存
+    fetch(e.request).then((res) => {
       const copy = res.clone();
       if (res.ok && url.origin === self.location.origin) {
         caches.open(CACHE).then((c) => c.put(e.request, copy));
       }
       return res;
-    }).catch(() => caches.match("/index.html")))
+    }).catch(() => caches.match(e.request).then((hit) => hit || caches.match("/index.html")))
   );
 });
