@@ -585,6 +585,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/" or path == "/index.html":
                 return self._serve_file(STATIC / "index.html", "text/html; charset=utf-8")
+            if path in ("/mobile", "/m", "/mobile.html"):
+                return self._serve_file(STATIC / "mobile.html", "text/html; charset=utf-8")
+            if path in ("/qr", "/phone"):
+                return self._serve_file(STATIC / "qr.html", "text/html; charset=utf-8")
             if path.startswith("/static/"):
                 return self._serve_file(STATIC / path[len("/static/"):].lstrip("/"))
             if path.startswith("/files/samples/"):

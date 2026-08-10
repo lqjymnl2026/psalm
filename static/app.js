@@ -195,6 +195,7 @@ async function renderDashboard() {
       <div class="card-title">快捷入口</div>
       <div class="flex flex-wrap">
         <button class="btn btn-primary" data-goto="collection">📥 批量导入</button>
+        <button class="btn btn-gold" id="dashMobile">📱 手机快捷收集</button>
         <button class="btn" data-goto="organize">🧠 一键智能整理</button>
         <button class="btn" data-goto="review">✅ 去审核</button>
         <button class="btn btn-gold" data-goto="export">📤 导出中心</button>
@@ -268,6 +269,7 @@ async function renderCollection() {
 
     <div class="card card-pad section">
       <div class="card-title">＋ 手工新增曲目
+        <button class="btn btn-gold btn-sm" id="btnMobileCollect" style="margin-left:auto">📱 快捷收集页</button>
         <button class="btn btn-primary btn-sm" id="btnOcrFill">📷 拍照识别填表</button>
       </div>
       <div class="card card-pad mb16" id="ocrPanel" hidden style="background:#f6f9ff">
@@ -318,6 +320,8 @@ async function renderCollection() {
   });
   fi.addEventListener("change", () => { if (fi.files.length) uploadFiles(fi.files); fi.value = ""; });
 
+  $("#btnMobileCollect").addEventListener("click", () => { location.href = "/mobile"; });
+  $("#dashMobile").addEventListener("click", () => { location.href = "/mobile"; });
   $("#btnCamera").addEventListener("click", () => $("#cameraInput").click());
   $("#btnGallery").addEventListener("click", () => $("#galleryInput").click());
   $("#btnOcrFill").addEventListener("click", () => $("#cameraInput").click());

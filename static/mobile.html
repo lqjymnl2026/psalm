@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>赞美诗收集</title>
+<meta name="theme-color" content="#1e2942">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="赞美诗收集">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<style>
+:root{--bg:#f2f5fa;--card:#fff;--ink:#1c2740;--ink2:#5b6b85;--line:#e3e8f0;--primary:#4b6eaf;--primary-d:#3a5791;--gold:#c9a227;--green:#2e9e6b;--red:#d9534f}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);font-size:15px;line-height:1.55;padding-bottom:96px}
+.app{max-width:540px;margin:0 auto;padding:0 14px}
+.top{position:sticky;top:0;background:linear-gradient(135deg,#1e2942,#3a5791);color:#fff;padding:14px 14px 12px;display:flex;justify-content:space-between;align-items:center;border-radius:0 0 16px 16px;z-index:10}
+.top h1{font-size:17px;font-weight:700}
+.top .cnt{font-size:12px;opacity:.85;background:rgba(255,255,255,.14);padding:3px 10px;border-radius:20px}
+.top a{color:#ffd970;font-size:12px;text-decoration:none;background:rgba(255,255,255,.12);padding:5px 10px;border-radius:8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-top:12px}
+.card h2{font-size:14px;margin-bottom:10px;color:var(--ink2);font-weight:600}
+.capture{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.cap{display:flex;flex-direction:column;align-items:center;gap:6px;padding:18px 8px;border:1px solid var(--line);border-radius:12px;background:#f7f9ff;font-size:13px;font-weight:600;cursor:pointer}
+.cap:active{background:#eef3fd}
+.cap .i{font-size:26px}
+.cap.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.cap.primary:active{background:var(--primary-d)}
+.fg{margin-bottom:10px}
+.fg label{display:block;font-size:12px;color:var(--ink2);margin-bottom:4px;font-weight:600}
+.fg input,.fg textarea{width:100%;border:1px solid var(--line);border-radius:10px;padding:11px 12px;font-size:15px;font-family:inherit;outline:none;background:#fff}
+.fg input:focus,.fg textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(75,110,175,.12)}
+.fg textarea{resize:vertical;min-height:96px;line-height:1.6}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ocr{display:none;background:#f0faf4;border:1px solid #bcd8c6;border-radius:12px;padding:12px;margin-top:12px}
+.ocr.show{display:block}
+.ocr b{font-size:13px}
+.ocr .note{font-size:12px;color:var(--ink2);margin-top:3px}
+.ocr pre{background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;font-size:12px;white-space:pre-wrap;max-height:140px;overflow:auto;margin-top:8px;font-family:inherit}
+.savebar{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid var(--line);padding:10px 14px calc(10px + env(safe-area-inset-bottom));display:flex;gap:10px;z-index:20}
+.savebar button{flex:1;border:none;border-radius:12px;padding:14px;font-size:16px;font-weight:700;cursor:pointer}
+#saveBtn{background:var(--gold);color:#fff}
+#saveBtn:disabled{opacity:.6}
+#resetBtn{background:#eef1f7;color:var(--ink2)}
+.toast{position:fixed;top:16px;left:14px;right:14px;background:#1c2740;color:#fff;border-radius:12px;padding:12px 14px;text-align:center;font-size:14px;z-index:50;opacity:0;transform:translateY(-12px);transition:.25s;pointer-events:none}
+.toast.show{opacity:1;transform:none}
+.badge{display:inline-block;background:#faf3dd;color:#a8841b;border-radius:12px;padding:2px 8px;font-size:11px;margin-left:6px}
+.imported{margin-top:12px;display:none}
+.imported.show{display:block}
+.imported .ibox{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px}
+.imported .ib{background:#f6f9ff;border-radius:10px;padding:8px 4px;text-align:center;font-size:12px}
+.imported .ib b{display:block;font-size:18px}
+.ib.ok b{color:var(--green)} .ib.warn b{color:#d9900a} .ib.dup b{color:var(--gold)} .ib.bad b{color:var(--red)}
+.muted{color:var(--ink2);font-size:12px}
+.mt8{margin-top:8px}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>🎵 赞美诗收集</h1>
+  <span class="cnt" id="cnt">…</span>
+  <a href="/#/collection" id="fullLink">完整版 →</a>
+</div>
+
+<div class="app">
+  <div class="card">
+    <h2>📷 拍照 / 相册 收集</h2>
+    <div class="capture">
+      <div class="cap primary" id="btnCam"><span class="i">📷</span>拍照识别</div>
+      <div class="cap" id="btnGal"><span class="i">🖼️</span>相册/文件</div>
+    </div>
+    <input type="file" id="camInput" hidden accept="image/*" capture="environment">
+    <input type="file" id="galInput" hidden multiple accept=".xlsx,.xlsm,.xls,.csv,.pdf,.docx,.doc,.jpg,.jpeg,.png,.bmp,.webp,.gif,.tif,.tiff,.mp3,.wav,.m4a,.aac,.flac,.ogg">
+    <div class="ocr" id="ocrBox">
+      <b>📷 识别结果</b> <span class="badge" id="ocrEngine"></span>
+      <div class="note" id="ocrNote"></div>
+      <pre id="ocrText"></pre>
+    </div>
+    <div class="imported" id="imported">
+      <div class="muted">批量导入完成：</div>
+      <div class="ibox">
+        <div class="ib ok"><b id="iOk">0</b>识别成功</div>
+        <div class="ib warn"><b id="iWarn">0</b>待确认</div>
+        <div class="ib dup"><b id="iDup">0</b>重复</div>
+        <div class="ib bad"><b id="iBad">0</b>不完整</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>✍️ 手动录入</h2>
+    <div class="fg"><label>歌名 *</label><input id="title" placeholder="例：奇异恩典"></div>
+    <div class="fg"><label>首句</label><input id="first" placeholder="例：奇异恩典，何等甘甜"></div>
+    <div class="fg"><label>歌词</label><textarea id="lyrics" placeholder="每句一行，自动识别歌名与歌词"></textarea></div>
+    <div class="g2">
+      <div class="fg"><label>作者 / 作词</label><input id="lyricist" placeholder="例：John Newton"></div>
+      <div class="fg"><label>作曲 / 曲调</label><input id="composer" placeholder="例：NEW BRITAIN"></div>
+    </div>
+    <div class="fg"><label>来源</label><input id="source" placeholder="例：老赞美诗集"></div>
+    <div class="fg"><label>备注</label><input id="comment" placeholder="（可选）"></div>
+  </div>
+  <div class="muted center mt8" style="text-align:center;padding:6px">保存后自动 AI 分类入库，可在完整版中审核/导出</div>
+</div>
+
+<div class="savebar">
+  <button id="resetBtn">清空</button>
+  <button id="saveBtn">保存并继续</button>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+let pendingPhoto = null;
+function toast(msg, ms = 2600) {
+  const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), ms);
+}
+async function api(path, opts = {}) {
+  const r = await fetch(path, opts);
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || (d && d.ok === false && !d.summary)) throw new Error((d && d.msg) || "请求失败");
+  return d;
+}
+async function refreshCnt() {
+  try {
+    const d = await api("/api/bootstrap");
+    $("#cnt").textContent = "已收 " + d.stats.total + " 首";
+  } catch (e) { $("#cnt").textContent = "连接中…"; }
+}
+async function handlePhoto(file) {
+  toast("识别中…", 60000);
+  try {
+    const fd = new FormData(); fd.append("file", file, file.name);
+    const d = await api("/api/ocr", { method: "POST", body: fd });
+    pendingPhoto = d.attachment;
+    if (d.parsed && (d.parsed.title || d.parsed.lyrics)) {
+      $("#title").value = d.parsed.title || "";
+      $("#first").value = d.parsed.firstLine || "";
+      $("#lyrics").value = d.parsed.lyrics || "";
+    }
+    $("#ocrEngine").textContent = "引擎：" + (d.engine || "—");
+    $("#ocrNote").textContent = d.parsed?.note || "";
+    $("#ocrText").textContent = d.text || "（未识别到文字，可手动填写）";
+    $("#ocrBox").classList.add("show");
+    toast(d.parsed?.note || "识别完成", 3200);
+  } catch (e) { toast("识别失败：" + e.message, 4000); }
+}
+async function handleImport(files) {
+  toast("导入中…", 60000);
+  try {
+    const fd = new FormData();
+    Array.from(files).forEach((f) => fd.append("files", f, f.name));
+    const d = await api("/api/import", { method: "POST", body: fd });
+    const s = d.summary;
+    $("#iOk").textContent = s.ok; $("#iWarn").textContent = s.needsReview;
+    $("#iDup").textContent = s.duplicates; $("#iBad").textContent = s.incomplete;
+    $("#imported").classList.add("show");
+    toast(`导入 ${s.total} 首完成`, 3200);
+    refreshCnt();
+  } catch (e) { toast("导入失败：" + e.message, 4000); }
+}
+$("#btnCam").addEventListener("click", () => $("#camInput").click());
+$("#btnGal").addEventListener("click", () => $("#galInput").click());
+$("#camInput").addEventListener("change", () => { const f = $("#camInput").files[0]; $("#camInput").value = ""; if (f) handlePhoto(f); });
+$("#galInput").addEventListener("change", () => { const fs = $("#galInput").files; $("#galInput").value = ""; if (fs.length) handleImport(fs); });
+$("#saveBtn").addEventListener("click", async () => {
+  const title = $("#title").value.trim();
+  if (!title) { toast("请填写歌名", 2600); $("#title").focus(); return; }
+  const btn = $("#saveBtn"); btn.disabled = true; btn.textContent = "保存中…";
+  try {
+    const body = {
+      title, firstLine: $("#first").value.trim(), lyrics: $("#lyrics").value,
+      lyricist: $("#lyricist").value.trim(), composer: $("#composer").value.trim(),
+      source: $("#source").value.trim(), comment: $("#comment").value.trim(),
+      themes: [], scenarios: [], musicTypes: [], status: "pending",
+    };
+    if (pendingPhoto) body.attachment = pendingPhoto;
+    const d = await api("/api/songs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    toast(`已保存《${d.song.title}》✅`);
+    ["title", "first", "lyrics", "lyricist", "composer", "source", "comment"].forEach((i) => $("#" + i).value = "");
+    pendingPhoto = null; $("#ocrBox").classList.remove("show");
+    $("#title").focus(); refreshCnt();
+  } catch (e) { toast("保存失败：" + e.message, 4000); }
+  btn.disabled = false; btn.textContent = "保存并继续";
+});
+$("#resetBtn").addEventListener("click", () => {
+  ["title", "first", "lyrics", "lyricist", "composer", "source", "comment"].forEach((i) => $("#" + i).value = "");
+  pendingPhoto = null; $("#ocrBox").classList.remove("show");
+  $("#title").focus();
+});
+refreshCnt();
+$("#title").focus();
+</script>
+</body>
+</html>
