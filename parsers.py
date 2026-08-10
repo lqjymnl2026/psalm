@@ -620,6 +620,71 @@ def ocr_image_tesseractjs_lines(path):
     return _pick_best_lines([l1, l2]) or (l1 or l2)
 
 
+_TOC_NUM_RE = re.compile(r"^\s*(?:第\s*)?(\d{1,4})\s*[、.．)）\-:：\s]*\s*(.{1,30}?)(?:\s*[…·]{2,}\s*(\d{1,3}))?\s*$")
+_TOC_SHOU_RE = re.compile(r"^\s*(?:第\s*)?(\d{1,3})\s*首[”\"']?\s*(.{1,30}?)\s*$")
+_TOC_DOT_RE = re.compile(r"^\s*(.{2,26}?)[…·.。 ]{2,}(\d{1,3})\s*$")
+
+
+def parse_toc_entries(text, source=""):
+    """目录识别：从文本中提取 {number,title,page} 条目。至少 3 条才算目录。"""
+    entries = []
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    for l in lines:
+        if not l or re.fullmatch(r"[\d\s…·.。\-]+", l):
+            continue
+        m = _TOC_NUM_RE.match(l)
+        if m:
+            num = m.group(1)
+            rest = m.group(2).strip()
+            page = m.group(3) or ""
+            if not page:
+                mm = re.match(r"^(.*?)(\d{1,3})$", rest)
+                if mm and len(mm.group(1)) >= 2:
+                    rest, page = mm.group(1), mm.group(2)
+            title = rest.strip(" […·.。、，,；;：:　]")
+            if 2 <= len(title) <= 30:
+                entries.append({"number": num, "title": title, "page": page})
+            continue
+        m2 = _TOC_DOT_RE.match(l)
+        if m2:
+            title = m2.group(1).strip(" […·.。、，,；;：:　]")
+            if 2 <= len(title) <= 26:
+                entries.append({"number": "", "title": title, "page": m2.group(2)})
+            continue
+        # “N首 + 歌名” 格式（赞美诗集目录常用：页码 + 71首 + 歌名）
+        m3 = _TOC_SHOU_RE.match(l)
+        if m3:
+            num = m3.group(1)
+            title = m3.group(2).strip(" ””\"'、，,；;:：…·.。 	")
+            title = re.sub(r"\d{1,3}\s+\d{1,3}\s*首.*$", "", title)
+            title = re.sub(r"\d{1,3}\s*首.*$", "", title)
+            title = re.sub(r"\d{1,3}\s*$", "", title).strip(" ””\"'、，,；;:：…·.。 	")
+            if 2 <= len(title) <= 30:
+                entries.append({"number": num, "title": title, "page": ""})
+    return entries if len(entries) >= 3 else []
+
+
+def parse_toc_shou(text, source=""):
+    """赞美诗集目录专用：行内含 “N首” → 取 N 为首数，N首之后文字为歌名。
+    行尾混入的“页码 下一首号首”噪音一并清理。返回 [{number,title,page}]。"""
+    entries = {}
+    for l in text.splitlines():
+        l = l.strip()
+        m = re.search(r"(\d{1,3})\s*首[”\"']?", l)
+        if not m:
+            continue
+        num = m.group(1)
+        rest = l[m.end():].strip(" ””\"'、，,；;:：…·.。 	")
+        rest = re.sub(r"\d{1,3}\s+\d{1,3}\s*首.*$", "", rest)
+        rest = re.sub(r"\d{1,3}\s*首.*$", "", rest)
+        rest = re.sub(r"\d{1,3}\s*$", "", rest)
+        title = rest.strip(" ””\"'、，,；;:：…·.。 	")
+        if 2 <= len(title) <= 30 and not re.fullmatch(r"[\d\s…·.。\-]+", title):
+            if num not in entries or len(title) > len(entries[num]):
+                entries[num] = title
+    return [{"number": n, "title": t, "page": ""} for n, t in entries.items()]
+
+
 def parse_ocr_text_multi(text, source=""):
     """一页多首切分（文字顺序版，不依赖坐标）：
     歌名 = 短行大字，且其下一行是数字曲谱行（如 51/3% 343…）→ 视为新歌起点。
@@ -649,6 +714,152 @@ def parse_ocr_text_multi(text, source=""):
     return songs
 
 
+def _run_tessjs_direct_words(pre, psm):
+    """返回 {lines, words} 词级坐标数据。"""
+    node = _find_node()
+    script = pathlib.Path(__file__).resolve().parent / "tools" / "ocr_tessera.js"
+    mods = _find_node_modules()
+    if not node or not script.exists() or not mods:
+        return None
+    env = dict(os.environ)
+    env["NODE_PATH"] = mods
+    try:
+        out = subprocess.run([node, str(script), pre, psm, "--json"], capture_output=True, timeout=300, env=env)
+        if out.returncode != 0:
+            return None
+        data = json.loads(out.stdout.decode("utf-8", errors="replace"))
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def reconstruct_rows(words):
+    """按词级坐标把整页重组成行（不拆栏）：按 y 分组、行内按 x 排序。"""
+    if not words:
+        return []
+    ws = sorted(words, key=lambda w: (w["y"], w["x"]))
+    rows = []
+    cur = []
+    for w in ws:
+        if cur and (w["y"] - cur[-1]["y"]) > max(6, cur[-1]["h"] * 0.7):
+            rows.append(cur)
+            cur = []
+        cur.append(w)
+    if cur:
+        rows.append(cur)
+    out = []
+    for row in rows:
+        row.sort(key=lambda w: w["x"])
+        parts = []
+        prev = None
+        for w in row:
+            t = w["text"]
+            if prev and re.search(r"[A-Za-z0-9]$", prev) and re.match(r"^[A-Za-z0-9]", t):
+                parts.append(" ")
+            parts.append(t)
+            prev = t
+        out.append("".join(parts))
+    return out
+
+
+def reconstruct_columns(words):
+    """按词级 x 坐标把页面分成左右栏，每栏重建为按上到下排列的行。"""
+    if not words:
+        return []
+    centers = [w["x"] + w["w"] / 2 for w in words]
+    gap, split = 0, None
+    for a, b in zip(sorted(centers), sorted(centers)[1:]):
+        if b - a > gap:
+            gap, split = b - a, (a + b) / 2
+    width = max(w["x"] + w["w"] for w in words) - min(w["x"] for w in words)
+    if split is None or gap < width * 0.12:
+        cols = [words]
+    else:
+        cols = [[w for w in words if w["x"] + w["w"] / 2 < split],
+                [w for w in words if w["x"] + w["w"] / 2 >= split]]
+    result = []
+    for col in cols:
+        col_sorted = sorted(col, key=lambda w: (w["y"], w["x"]))
+        rows = []
+        cur = []
+        for w in col_sorted:
+            if cur and (w["y"] - cur[-1]["y"]) > max(6, cur[-1]["h"] * 0.7):
+                rows.append(cur)
+                cur = []
+            cur.append(w)
+        if cur:
+            rows.append(cur)
+        col_lines = []
+        for row in rows:
+            row.sort(key=lambda w: w["x"])
+            parts = []
+            prev = None
+            for w in row:
+                t = w["text"]
+                if prev and re.search(r"[A-Za-z0-9]$", prev) and re.match(r"^[A-Za-z0-9]", t):
+                    parts.append(" ")
+                parts.append(t)
+                prev = t
+            col_lines.append("".join(parts))
+        result.append(col_lines)
+    return result
+
+
+def parse_column_lines(col_lines, source=""):
+    """在“已按栏整理”的行列表里切多首：标题后跟数字曲谱行 = 新歌起点。"""
+    lines = col_lines
+    titles = []
+    for i, l in enumerate(lines):
+        if (2 <= len(l) <= 14 and not re.search(r"[，。；：？！、…,.;:?!]", l)
+                and not _is_notation_line(l)):
+            nxt = lines[i + 1] if i + 1 < len(lines) else ""
+            if nxt and _is_notation_line(nxt) and re.search(r"\d", nxt):
+                titles.append(i)
+    if not titles:
+        return []
+    songs = []
+    for k, idx in enumerate(titles):
+        end = titles[k + 1] if k + 1 < len(titles) else len(lines)
+        seg = lines[idx + 1:end]
+        lyric_lines = [l for l in seg if not _is_notation_line(l)]
+        first_nota = next((i for i, l in enumerate(seg) if _is_notation_line(l)), None)
+        after = [l for i, l in enumerate(seg)
+                 if first_nota is not None and i > first_nota and not _is_notation_line(l)]
+        first = after[0] if after else (lyric_lines[0] if lyric_lines else "")
+        songs.append({"title": lines[idx], "firstLine": first, "lyrics": "\n".join(lyric_lines)})
+    return songs
+
+
+def parse_ocr_columns_multi(words, source=""):
+    """一页多栏多首：按栏重建 → 每栏按“歌名+数字曲谱行”切分。"""
+    cols = reconstruct_columns(words)
+    songs = []
+    for col in cols:
+        songs.extend(parse_column_lines(col, source))
+    return songs
+
+
+def ocr_image_tesseractjs_words(path):
+    """三通道识别，返回最优的 {lines, words}。"""
+    if not (pathlib.Path(__file__).resolve().parent / "data" / "tessdata" / "chi_sim.traineddata.gz").exists():
+        return None
+    cands = []
+    for scale, contrast, binarize, psm in [(2400, None, False, "4"), (3000, None, True, "4"), (2200, 1.5, False, "3")]:
+        pre = _preprocess_image_variant(path, scale, contrast, binarize=binarize)
+        d = _run_tessjs_direct_words(pre, psm)
+        try: os.unlink(pre)
+        except OSError: pass
+        if d:
+            cands.append(d)
+    best, best_score = None, -1
+    for d in cands:
+        songs = parse_ocr_columns_multi(d.get("words") or [], "")
+        score = sum((2 if sg["title"] else 0) + len(_CJK_RE.findall(sg["firstLine"] or "")) for sg in songs)
+        if score > best_score:
+            best, best_score = d, score
+    return best or (cands[0] if cands else None)
+
+
 def _pick_best_ocr_text(texts):
     """多通道识别结果中，取“歌名+首行歌词+可切分首数”最完整的一个。"""
     best, best_score = None, -1
@@ -664,31 +875,40 @@ def _pick_best_ocr_text(texts):
     return best
 
 
-def ocr_image_tesseractjs(path):
-    """tesseract.js（Node，离线 CPU，自带中文模型）。双通道识别取最优。返回文本或 None。"""
+def ocr_image_tesseractjs_full(path):
+    """三通道识别（一次返回 text + words 词级坐标），按“歌名/首行/多首切分”综合取最优。"""
     if not (pathlib.Path(__file__).resolve().parent / "data" / "tessdata" / "chi_sim.traineddata.gz").exists():
-        return None
-    texts = []
-    # 通道1：放大2400 + 无对比度 + PSM4
-    pre1 = _preprocess_image_variant(path, 2400, None)
-    t1 = _run_tessjs_direct(pre1, "4")
-    try: os.unlink(pre1)
-    except OSError: pass
-    texts.append(t1)
-    # 通道2：放大3000 + 二值化 + PSM4（对印刷歌谱最有效）
-    pre2 = _preprocess_image_variant(path, 3000, None, binarize=True)
-    t2 = _run_tessjs_direct(pre2, "4")
-    try: os.unlink(pre2)
-    except OSError: pass
-    texts.append(t2)
-    # 通道3：放大2200 + 对比度1.5 + PSM3
-    pre3 = _preprocess_image_variant(path, 2200, 1.5)
-    t3 = _run_tessjs_direct(pre3, "3")
-    try: os.unlink(pre3)
-    except OSError: pass
-    texts.append(t3)
-    best = _pick_best_ocr_text(texts)
-    return best or next((x for x in texts if x), None)
+        return None, None
+    cands = []
+    for scale, contrast, binarize, psm in [(2400, None, False, "4"), (3000, None, True, "4"), (2200, 1.5, False, "3")]:
+        pre = _preprocess_image_variant(path, scale, contrast, binarize=binarize)
+        d = _run_tessjs_direct_words(pre, psm)
+        try: os.unlink(pre)
+        except OSError: pass
+        if d:
+            cands.append(d)
+    best, best_score = None, -1
+    for d in cands:
+        t = (d.get("text") or "")
+        score = 0
+        if t:
+            p = parse_ocr_plain_text(t, "")
+            score += (2 if p["title"] else 0) + len(_CJK_RE.findall(p["firstLine"] or ""))
+            score += len(parse_ocr_text_multi(t, "")) * 3
+        words = d.get("words") or []
+        if words:
+            songs = parse_ocr_columns_multi(words, "")
+            score += sum((2 if sg["title"] else 0) + len(_CJK_RE.findall(sg["firstLine"] or "")) for sg in songs) * 2
+        if score > best_score:
+            best, best_score = d, score
+    if not best:
+        return None, None
+    return best.get("text") or None, best
+
+
+def ocr_image_tesseractjs(path):
+    text, _full = ocr_image_tesseractjs_full(path)
+    return text
 
 
 def ocr_image_tesseract(path):
@@ -750,10 +970,10 @@ def recognize_image_full2(path, settings=None):
     v = ocr_image_vision(path)
     if v:
         return v[0], "Vision", None, v[1]
-    t = ocr_image_tesseractjs(path)
+    t, full = ocr_image_tesseractjs_full(path)
     if t:
-        lines = ocr_image_tesseractjs_lines(path)
-        return t, "tesseract.js", None, lines
+        words = (full or {}).get("words") or []
+        return t, "tesseract.js", None, {"words": words, "full": full}
     c = ocr_image_tesseract(path)
     if c:
         return c, "tesseract", None, None
@@ -784,27 +1004,38 @@ def parse_image_file(path, filename, settings=None):
             songs = [{"title": ai.get("title", ""), "firstLine": ai.get("firstLine", ""),
                       "lyrics": ai.get("lyrics", ""), "source": filename}]
         else:
-            # 一页多首：标题后跟数字曲谱行 = 新歌起点
-            multi = parse_ocr_text_multi(text, filename)
-            if multi:
-                songs = [{"title": m["title"], "firstLine": m["firstLine"],
-                          "lyrics": m["lyrics"], "source": filename} for m in multi]
+            songs = []
+            # ① 目录识别：优先“N首+歌名”格式，其次通用格式；≥3 条判为目录
+            words = (lines or {}).get("words") if isinstance(lines, dict) else None
+            rows = reconstruct_rows(words) if words else []
+            rowtext = "\n".join(rows) if rows else text
+            toc = parse_toc_shou(rowtext, filename)
+            if len(toc) < 3:
+                toc = parse_toc_entries(rowtext, filename)
+            if len(toc) >= 3:
+                songs = [{"title": e["title"], "number": e["number"],
+                          "comment": ("页码 " + e["page"]) if e.get("page") else "来自目录",
+                          "lyrics": "", "source": filename,
+                          "ocrNote": "目录识别（无歌词，待补充）"} for e in toc]
             else:
-                parsed = parse_ocr_plain_text(text, filename)
-                songs = [{"title": parsed["title"], "firstLine": parsed["firstLine"],
-                          "lyrics": parsed["lyrics"], "source": filename}]
-        for s in songs:
-            s.setdefault("flags", []).append("OCR识别")
+                # ② 一页多首：词级分栏切分 → 文字顺序切分 → 单首
+                words = (lines or {}).get("words") if isinstance(lines, dict) else None
+                multi = parse_ocr_columns_multi(words, filename) if words else []
+                if not multi:
+                    multi = parse_ocr_text_multi(text, filename)
+                if multi:
+                    songs = [{"title": m["title"], "firstLine": m["firstLine"],
+                              "lyrics": m["lyrics"], "source": filename} for m in multi]
+                else:
+                    parsed = parse_ocr_plain_text(text, filename)
+                    songs = [{"title": parsed["title"], "firstLine": parsed["firstLine"],
+                              "lyrics": parsed["lyrics"], "source": filename}]
+        for sg in songs:
+            sg.setdefault("flags", []).append("OCR识别")
         return songs, []
     return [], ["图片 OCR 未识别出文字（可安装 tesseract，或在设置中配置 AI 接口）"]
 
 
-# ---------------------------------------------------------------- 音频
-def parse_audio_file(path, filename):
-    return [], ["音频暂不支持离线转写，请人工补充歌名与歌词"]
-
-
-# ---------------------------------------------------------------- 统一入口
 def parse_upload(filename: str, data: bytes, dest_dir: str, settings=None):
     name = os.path.basename(filename)
     safe = re.sub(r"[^\w.\-（）()\u4e00-\u9fff]+", "_", name)

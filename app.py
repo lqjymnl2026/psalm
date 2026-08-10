@@ -884,7 +884,10 @@ class Handler(BaseHTTPRequestHandler):
                     if ai and ai.get("lyrics"):
                         result["parsed"] = ai
                     else:
-                        multi = parsers.parse_ocr_text_multi(text, fname)
+                        words = (lines or {}).get("words") if isinstance(lines, dict) else None
+                        multi = parsers.parse_ocr_columns_multi(words, fname) if words else []
+                        if not multi:
+                            multi = parsers.parse_ocr_text_multi(text, fname)
                         if multi:
                             first = multi[0]
                             result["songs"] = multi

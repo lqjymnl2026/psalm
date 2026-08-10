@@ -18,18 +18,47 @@ if (!img) { console.error("usage: ocr_tessera.js <image> [psm] [--json]"); proce
     logger: () => {},
   });
   await worker.setParameters({ tessedit_pageseg_mode: psm });
-  const { data } = await worker.recognize(img);
+  // 必须开启 blocks 输出才有行坐标
+  const { data } = await worker.recognize(img, {}, { blocks: true });
   if (wantJson) {
-    const lines = (data.lines || []).map((l) => ({
-      text: (l.text || "").trim(),
-      x: l.bbox ? l.bbox.x0 : 0,
-      y: l.bbox ? l.bbox.y0 : 0,
-      w: l.bbox ? l.bbox.x1 - l.bbox.x0 : 0,
-      h: l.bbox ? l.bbox.y1 - l.bbox.y0 : 0,
-      conf: l.confidence || 0,
-    })).filter((l) => l.text);
-    lines.sort((a, b) => (a.y - b.y) || (a.x - b.x));
-    process.stdout.write(JSON.stringify(lines));
+    const out = [];
+    const words = [];
+    const push = (l) => {
+      if (l && l.text && l.text.trim()) {
+        out.push({
+          text: l.text.trim(),
+          x: l.bbox ? l.bbox.x0 : 0,
+          y: l.bbox ? l.bbox.y0 : 0,
+          w: l.bbox ? l.bbox.x1 - l.bbox.x0 : 0,
+          h: l.bbox ? l.bbox.y1 - l.bbox.y0 : 0,
+          conf: l.confidence || 0,
+        });
+      }
+    };
+    const wpush = (l) => {
+      if (l && l.text && l.text.trim()) {
+        words.push({
+          text: l.text.trim(),
+          x: l.bbox ? l.bbox.x0 : 0,
+          y: l.bbox ? l.bbox.y0 : 0,
+          w: l.bbox ? l.bbox.x1 - l.bbox.x0 : 0,
+          h: l.bbox ? l.bbox.y1 - l.bbox.y0 : 0,
+          conf: l.confidence || 0,
+        });
+      }
+    };
+    (data.lines || []).forEach(push);
+    if (data.blocks) {
+      data.blocks.forEach((b) => {
+        (b.lines || []).forEach(push);
+        (b.paragraphs || []).forEach((p) => (p.lines || []).forEach((ln) => {
+          push(ln);
+          (ln.words || []).forEach(wpush);
+        }));
+      });
+    }
+    out.sort((a, b) => (a.y - b.y) || (a.x - b.x));
+    process.stdout.write(JSON.stringify({ text: data.text || "", lines: out, words }));
   } else {
     process.stdout.write(data.text || "");
   }
