@@ -598,9 +598,10 @@ async function renderOrganize() {
           <div class="hint mt8">手机拍照后自动识别歌名与歌词并填入表单。${d.ocrAvailable ? "" : "可在本机安装 tesseract+chi_sim，或在设置中配置 AI 接口。"}</div>
         </div>
         <div class="card card-pad">
-          <div class="card-title small">AI 识别引擎</div>
-          <div>${state.settings.openaiKey ? "✅ 已配置 " + esc(state.settings.openaiKey) : "使用本地智能引擎（离线）"}</div>
-          <div class="hint mt8">在“⚙️ 设置”中填入 OpenAI 兼容 API Key 可启用真实 AI 分类。</div>
+          <div class="card-title small">AI 视觉识别引擎</div>
+          <div>${state.settings.openaiKey ? "✅ 已配置 " + esc(state.settings.openaiKey) : "未配置（当前用本地引擎）"}</div>
+          <div class="hint mt8">填入 OpenAI 兼容「视觉模型」Key 后，拍照/相册/目录识别自动用 AI，歌名准确率大幅提升。</div>
+          <button class="btn btn-sm btn-gold mt8" id="goAiSettings">⚙️ 去设置 AI Key</button>
         </div>
         <div class="card card-pad">
           <div class="card-title small">当前状态</div>
@@ -632,6 +633,8 @@ async function renderOrganize() {
   renderDupList(dups.groups);
   renderNeedReview(needReview.items);
 
+  const gai = $("#goAiSettings");
+  if (gai) gai.addEventListener("click", () => { openSettings(); });
   $("#orgAll").addEventListener("click", () => runOrganize("all"));
   $("#orgPending").addEventListener("click", () => runOrganize("pending"));
   $("#refreshDup").addEventListener("click", async () => {
