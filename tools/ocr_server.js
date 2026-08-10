@@ -34,6 +34,7 @@ const server = http.createServer((req, res) => {
         const { paths } = JSON.parse(body);
         if (!Array.isArray(paths) || !paths.length) return respond(400, { error: "paths required" });
         const worker = await getWorker();
+        await worker.setParameters({ tessedit_pageseg_mode: "4" });
         const out = [];
         for (const p of paths) {
           const { data } = await worker.recognize(p);
