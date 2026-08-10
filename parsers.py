@@ -405,13 +405,20 @@ def _find_node_modules():
 
 
 def _preprocess_image(path):
-    """灰度 + 自动对比度 + 小图放大，提升 OCR 准确率。返回处理后的临时路径。"""
+    """OCR 前预处理：EXIF 转正 + 缩放到 1800px 内 + 灰度 + 对比度。
+    手机照片常有 EXIF 旋转、超大分辨率，不做处理 OCR 会失败或极慢。"""
     try:
         from PIL import Image, ImageOps
-        im = Image.open(path).convert("L")
+        im = Image.open(path)
+        im = ImageOps.exif_transpose(im)  # 按 EXIF 转正
+        im = im.convert("L")
         w, h = im.size
-        if max(w, h) < 1100:
-            scale = max(1.4, 1100 / max(w, h))
+        m = max(w, h)
+        if m > 1800:  # 大图缩小（12MP 手机照片）
+            scale = 1800 / m
+            im = im.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+        elif m < 900:  # 小图放大
+            scale = max(1.4, 900 / m)
             im = im.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
         im = ImageOps.autocontrast(im)
         tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
@@ -422,20 +429,82 @@ def _preprocess_image(path):
         return path
 
 
-def ocr_image_tesseractjs(path):
-    """tesseract.js（Node，离线 CPU，自带中文模型）。返回文本或 None。"""
+_OCR_PORT = int(os.environ.get("OCR_PORT", "8799"))
+_ocr_server_proc = None
+_ocr_server_checked = False
+
+
+def _ocr_server_running():
+    try:
+        import urllib.request
+        urllib.request.urlopen(f"http://127.0.0.1:{_OCR_PORT}/health", timeout=1)
+        return True
+    except Exception:
+        return False
+
+
+def _ensure_ocr_server():
+    """确保持久 OCR 服务在跑（worker 常驻，批量识别快）。"""
+    global _ocr_server_proc, _ocr_server_checked
+    if _ocr_server_running():
+        return _OCR_PORT
     node = _find_node()
-    script = pathlib.Path(__file__).resolve().parent / "tools" / "ocr_tessera.js"
+    script = pathlib.Path(__file__).resolve().parent / "tools" / "ocr_server.js"
     mods = _find_node_modules()
     if not node or not script.exists() or not mods:
         return None
-    if not (pathlib.Path(__file__).resolve().parent / "data" / "tessdata" / "chi_sim.traineddata.gz").exists():
-        return None
-    pre = _preprocess_image(path)
     env = dict(os.environ)
     env["NODE_PATH"] = mods
     try:
-        out = subprocess.run([node, str(script), pre], capture_output=True, timeout=240, env=env)
+        _ocr_server_proc = subprocess.Popen([node, str(script)], env=env,
+                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        return None
+    for _ in range(40):
+        if _ocr_server_running():
+            return _OCR_PORT
+        import time
+        time.sleep(0.25)
+    return None
+
+
+def ocr_image_tesseractjs_batch(paths):
+    """批量识别多张预处理后的图片（持久服务）。返回 [text,...] 或 None。"""
+    port = _ensure_ocr_server()
+    if not port:
+        return None
+    import urllib.request
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/ocr",
+                                     data=json.dumps({"paths": paths}).encode("utf-8"),
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=900) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        texts = data.get("texts")
+        return texts if isinstance(texts, list) else None
+    except Exception:
+        return None
+
+
+def ocr_image_tesseractjs(path):
+    """tesseract.js（Node，离线 CPU，自带中文模型）。返回文本或 None。"""
+    if not (pathlib.Path(__file__).resolve().parent / "data" / "tessdata" / "chi_sim.traineddata.gz").exists():
+        return None
+    pre = _preprocess_image(path)
+    try:
+        # 优先走持久服务
+        res = ocr_image_tesseractjs_batch([pre])
+        if res and res[0]:
+            return res[0].strip() or None
+        # 回退：直接子进程
+        node = _find_node()
+        script = pathlib.Path(__file__).resolve().parent / "tools" / "ocr_tessera.js"
+        mods = _find_node_modules()
+        if not node or not script.exists() or not mods:
+            return None
+        env = dict(os.environ)
+        env["NODE_PATH"] = mods
+        out = subprocess.run([node, str(script), pre], capture_output=True, timeout=300, env=env)
         t = out.stdout.decode("utf-8", errors="replace").strip()
         return t or None
     except Exception:
