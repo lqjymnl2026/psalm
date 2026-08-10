@@ -838,7 +838,12 @@ class Handler(BaseHTTPRequestHandler):
 
 # ---------------------------------------------------------------- 启动
 def ensure_seeded(store):
+    # seeded=True：显式“已初始化”（包括用户清空数据后），不再自动灌入示例数据
+    if store.data.get("seeded"):
+        return False
     if store.songs():
+        store.data["seeded"] = True
+        store.save()
         return False
     import seed
     for s in seed.build_seed_songs():
@@ -853,6 +858,7 @@ def ensure_seeded(store):
         seed.make_sample_files(str(SAMPLES))
     except Exception as e:
         print("示例文件生成失败：", e)
+    store.data["seeded"] = True
     store.save()
     return True
 
